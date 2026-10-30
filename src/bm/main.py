@@ -15,12 +15,13 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from bm.api.deps import authenticated_only
 from bm.api.errors import register_exception_handlers
 from bm.api.middleware import (
     BodySizeLimitMiddleware,
@@ -29,6 +30,7 @@ from bm.api.middleware import (
     SecurityHeadersMiddleware,
 )
 from bm.config import Settings, get_settings
+from bm.domain.shared.context import AuthContext
 from bm.infra.db.migration_state import migration_state
 from bm.infra.db.session import (
     database_reachable,
@@ -168,7 +170,11 @@ def _register_v1_routers(app: FastAPI) -> None:
     app.include_router(build_v1_router(), prefix=API_PREFIX)
 
     @app.get(f"{API_PREFIX}/meta", tags=["operational"])
-    def meta() -> dict[str, Any]:
+    def meta(
+        _ctx: Annotated[AuthContext, Depends(authenticated_only())],
+    ) -> dict[str, Any]:
+        """Authenticated, but needs no specific permission: it reports the server's own
+        version and time to whoever is signed in."""
         settings: Settings = app.state.settings
         return {
             "api_version": API_VERSION,

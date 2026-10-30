@@ -18,4 +18,7 @@ def build_v1_router() -> APIRouter:
 
 
 #: Mounted in this order. A milestone adds its module name here when its router lands.
-_ROUTER_MODULES: tuple[str, ...] = ()
+_ROUTER_MODULES: tuple[str, ...] = (
+    "auth",  # M3
+    "admin",  # M3 (users, devices); settings arrive with M4
+)

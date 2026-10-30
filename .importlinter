@@ -34,6 +34,10 @@ forbidden_modules =
 [importlinter:contract:api-never-reaches-past-domain]
 name = api must not touch repositories or ORM models directly
 type = forbidden
+; Direct imports only. A domain service reaching a repository is the intended
+; layering, and without this flag import-linter reports that legitimate chain
+; (api -> domain.service -> infra.repository) as a violation.
+allow_indirect_imports = True
 source_modules =
     bm.api
 forbidden_modules =

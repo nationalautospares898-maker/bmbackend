@@ -118,8 +118,8 @@ def test_no_float_conversion_in_the_domain_layer() -> None:
                 and node.func.id == "float"
             ):
                 violations.append(f"{_module_name(path)}:{node.lineno}")
-    assert violations == [], (
-        "float() must not appear in domain/ (ADR-013): " + ", ".join(violations)
+    assert violations == [], "float() must not appear in domain/ (ADR-013): " + ", ".join(
+        violations
     )
 
 

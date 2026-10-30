@@ -15,7 +15,7 @@ PUBLIC_ROUTES: dict[str, str] = {
     "/readyz": "readiness probe; reports only reachability and migration head",
     "/api/v1/openapi.json": "contract document; authenticated at the proxy in production",
     "/api/v1/docs": "disabled in production via BM_ENABLE_API_DOCS",
-    "/api/v1/docs/oauth2-redirect": "docs support route",
+    "/docs/oauth2-redirect": "docs support route; mounted at the root by FastAPI",
     "/api/v1/auth/login": "issues the first token; rate-limited and subject to lockout",
     "/api/v1/auth/refresh": "cookie-authenticated rotation, bound to X-Device-Id",
     "/api/v1/auth/logout": "revokes the caller's own session only",
