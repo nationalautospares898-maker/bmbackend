@@ -61,6 +61,11 @@ ignore = [
     "RUF012", # ClassVar annotations not required for SQLAlchemy/pydantic config dicts
 ]
 
+# Mathematical and typographic characters used deliberately in documentation. `2 × 1250`
+# reads better than `2 x 1250` in an arithmetic explanation, and these cannot be
+# confused for identifiers because they only ever appear in prose.
+allowed-confusables = ["×", "−", "≤", "≥", "→", "₹"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011"]
 "migrations/**" = ["I001"]
