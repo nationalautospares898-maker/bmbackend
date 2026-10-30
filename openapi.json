@@ -5653,7 +5653,7 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Daily Sales Api V1 Reports Daily Sales Get",
-                  "$ref": "#/components/schemas/ReportOut"
+                  "$ref": "#/components/schemas/DailySalesOut"
                 }
               }
             }
@@ -8583,6 +8583,214 @@
         ],
         "title": "CustomerUpsertRequest"
       },
+      "DailySalesByDayOut-Input": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "title": "Date"
+          },
+          "bill_count": {
+            "type": "integer",
+            "title": "Bill Count"
+          },
+          "net": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Net"
+          },
+          "credit_sales": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Credit Sales"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "date",
+          "bill_count",
+          "net",
+          "credit_sales"
+        ],
+        "title": "DailySalesByDayOut"
+      },
+      "DailySalesByDayOut-Output": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "title": "Date"
+          },
+          "bill_count": {
+            "type": "integer",
+            "title": "Bill Count"
+          },
+          "net": {
+            "type": "string",
+            "title": "Net"
+          },
+          "credit_sales": {
+            "type": "string",
+            "title": "Credit Sales"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "date",
+          "bill_count",
+          "net",
+          "credit_sales"
+        ],
+        "title": "DailySalesByDayOut"
+      },
+      "DailySalesByMethodOut-Input": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "collected": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Collected"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "method",
+          "collected"
+        ],
+        "title": "DailySalesByMethodOut"
+      },
+      "DailySalesByMethodOut-Output": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "collected": {
+            "type": "string",
+            "title": "Collected"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "method",
+          "collected"
+        ],
+        "title": "DailySalesByMethodOut"
+      },
+      "DailySalesOut": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "filters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Filters"
+          },
+          "excluded": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Excluded"
+          },
+          "bill_count": {
+            "type": "integer",
+            "title": "Bill Count"
+          },
+          "gross": {
+            "type": "string",
+            "title": "Gross"
+          },
+          "discount": {
+            "type": "string",
+            "title": "Discount"
+          },
+          "tax": {
+            "type": "string",
+            "title": "Tax"
+          },
+          "net": {
+            "type": "string",
+            "title": "Net"
+          },
+          "cash_sales": {
+            "type": "string",
+            "title": "Cash Sales"
+          },
+          "credit_sales": {
+            "type": "string",
+            "title": "Credit Sales"
+          },
+          "credit_bill_count": {
+            "type": "integer",
+            "title": "Credit Bill Count"
+          },
+          "collected": {
+            "type": "string",
+            "title": "Collected"
+          },
+          "by_day": {
+            "items": {
+              "$ref": "#/components/schemas/DailySalesByDayOut-Output"
+            },
+            "type": "array",
+            "title": "By Day"
+          },
+          "by_payment_method": {
+            "items": {
+              "$ref": "#/components/schemas/DailySalesByMethodOut-Output"
+            },
+            "type": "array",
+            "title": "By Payment Method"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "as_of",
+          "filters",
+          "excluded",
+          "bill_count",
+          "gross",
+          "discount",
+          "tax",
+          "net",
+          "cash_sales",
+          "credit_sales",
+          "credit_bill_count",
+          "collected",
+          "by_day",
+          "by_payment_method"
+        ],
+        "title": "DailySalesOut",
+        "description": "`GET /reports/daily-sales` \u2014 the one report a screen renders field by field."
+      },
       "DeviceInput": {
         "properties": {
           "id": {
@@ -9704,6 +9912,17 @@
             ],
             "title": "Discount Amount"
           },
+          "tax_rate_snapshot": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Tax Rate Snapshot"
+          },
           "tax_amount": {
             "anyOf": [
               {
@@ -9750,20 +9969,6 @@
               }
             ],
             "title": "Unit Cost Snapshot"
-          },
-          "tax_rate_snapshot": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax Rate Snapshot"
           }
         },
         "additionalProperties": false,
@@ -9776,6 +9981,7 @@
           "quantity",
           "unit_price",
           "discount_amount",
+          "tax_rate_snapshot",
           "tax_amount",
           "line_total",
           "returned_quantity"
@@ -9819,6 +10025,10 @@
             "type": "string",
             "title": "Discount Amount"
           },
+          "tax_rate_snapshot": {
+            "type": "string",
+            "title": "Tax Rate Snapshot"
+          },
           "tax_amount": {
             "type": "string",
             "title": "Tax Amount"
@@ -9841,17 +10051,6 @@
               }
             ],
             "title": "Unit Cost Snapshot"
-          },
-          "tax_rate_snapshot": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax Rate Snapshot"
           }
         },
         "additionalProperties": false,
@@ -9864,6 +10063,7 @@
           "quantity",
           "unit_price",
           "discount_amount",
+          "tax_rate_snapshot",
           "tax_amount",
           "line_total",
           "returned_quantity"
@@ -9984,14 +10184,7 @@
             "title": "Payment Status"
           },
           "oversell_override": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "boolean",
             "title": "Oversell Override"
           },
           "oversell_reason": {
@@ -10006,14 +10199,7 @@
             "title": "Oversell Reason"
           },
           "money_policy_version": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
             "title": "Money Policy Version"
           },
           "cancelled_at": {
@@ -10060,9 +10246,15 @@
           "total",
           "amount_paid",
           "outstanding",
-          "payment_status"
+          "payment_status",
+          "oversell_override",
+          "oversell_reason",
+          "money_policy_version",
+          "cancelled_at",
+          "cancellation_reason"
         ],
-        "title": "InvoiceOut"
+        "title": "InvoiceOut",
+        "description": "One shape, returned by `POST /sales:finalize` **and** `GET /invoices/{id}`.\n\nBuilt by a single serialiser (`api/v1/serialize.py`), because the confirmation card\nand the Daily Bills detail describe the same bill."
       },
       "InvoiceSummaryOut-Input": {
         "properties": {
@@ -11749,35 +11941,21 @@
             "type": "object",
             "title": "Filters"
           },
-          "rows": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "type": "array",
-            "title": "Rows"
-          },
-          "totals": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Totals"
-          },
           "excluded": {
             "additionalProperties": true,
             "type": "object",
             "title": "Excluded"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "as_of",
           "filters",
-          "rows",
-          "totals",
           "excluded"
         ],
-        "title": "ReportOut"
+        "title": "ReportOut",
+        "description": "The common report envelope (`API-SPECIFICATION.md \u00a73.11`).\n\n\u26a0\ufe0f The **only** permissive model in this module. Each report spreads its own figures\nat the top level \u2014 `daily-sales` has `gross`/`net`/`by_day`, `stock-position` has\n`rows` \u2014 so `extra=\"forbid\"` would make one model impossible. The envelope is what\nevery report shares and what the client relies on; the per-report figures are typed\nwhere a screen renders them field by field (`DailySalesOut`)."
       },
       "ResetPasswordRequest": {
         "properties": {
