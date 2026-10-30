@@ -390,10 +390,18 @@ non-documentation files created**, and both were explicitly requested by the own
 > both `.gitignore` files so it cannot be added by accident. It is the owner's original business
 > record, not a project artefact. Its *content* is fully specified in §3 of this document.
 
-### 7.5 Result
+### 7.5 Write permission — how it was actually proven
 
-Exact URLs, branches, commit hashes and push status are recorded in **§7.6** below *(appended after
-the push completed)*.
+Collaborator access was **not assumed from the owner's report or from a screenshot**. Before the
+real push, `git push --dry-run -u origin main` was run against each repository. A dry-run push
+performs the full server-side ref negotiation and **permission check**, and fails with
+`ERROR: Permission to … denied to …` if the account lacks write access. Both returned:
+
+```
+ * [new branch]      main -> main
+```
+
+That is the first point at which write access was **verified** rather than believed.
 
 ---
 
@@ -482,16 +490,36 @@ new evidence. **Twelve of twelve hold.** The two that were at risk:
 
 ---
 
-## 7.6 Push verification *(appended after the push)*
+## 13. Push verification — final state
 
 | | `bmfrontend` | `bmbackend` |
 |---|---|---|
 | Local directory | `c:\progromming\bm\bmfrontend` | `c:\progromming\bm\bmbackend` |
 | `origin` (fetch) | `https://github.com/nationalautospares898-maker/bmfrontend.git` | `https://github.com/nationalautospares898-maker/bmbackend.git` |
 | `origin` (push) | `git@github.com:nationalautospares898-maker/bmfrontend.git` | `git@github.com:nationalautospares898-maker/bmbackend.git` |
-| Branch | `main` → `origin/main` | `main` → `origin/main` |
-| Commits | *recorded in the final report* | *recorded in the final report* |
-| Push | *recorded in the final report* | *recorded in the final report* |
+| Branch | `main`, tracking `origin/main` | `main`, tracking `origin/main` |
+| **Commit** | **`88495a9be749be6959096ff3266de073519ab9e0`** | **`0482c7a2d9d185402c541efbcfaf4a7219e59b36`** |
+| Local HEAD = remote `main` | ✅ **Yes** | ✅ **Yes** |
+| Ahead / behind | `0 / 0` | `0 / 0` |
+| Working tree | clean | clean |
+| Files on the remote | **10** | **26** |
+| Push | ✅ **`* [new branch] main -> main`** | ✅ **`* [new branch] main -> main`** |
+
+**Mapping verified — not crossed:**
+
+```
+bmfrontend  →  nationalautospares898-maker/bmfrontend
+bmbackend   →  nationalautospares898-maker/bmbackend
+```
+
+**Cross-contamination check.** Seven path names exist in both trees (`CLAUDE.md`, `README.md`,
+`docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/TESTING-STRATEGY.md`,
+`.gitignore`) — as they should, since each project owns its own copy. Every one was compared by
+**blob hash** and all seven differ, confirming **no frontend file reached the backend repository or
+the reverse**. No `.xlsx` exists in either tree.
+
+**Not done, deliberately:** no force-push, no history rewrite, no branch deletion, no tag, no
+repository creation, no settings or visibility change, no CI workflow, no GitHub Pages, no release.
 
 ---
 

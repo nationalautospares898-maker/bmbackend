@@ -122,7 +122,7 @@ real money, no dedicated operations team.
 | **Detection** | Pre-go-live manual bill review with the owner |
 | **Recovery** | Change the policy; existing invoices keep their snapshots |
 | **Test coverage** | Property test: Σ printed line totals + rounding adjustment **exactly** equals the printed grand total |
-| **Residual** | Medium — depends on OD-7. **If whole-rupee rounding is ever enabled, the adjustment must be printed, and the bottom of the bill is `[UNSEEN]` (OD-5), so there is nowhere verified to print it.** This coupling must not be forgotten |
+| **Residual** | Medium — depends on OD-7. **If whole-rupee rounding is ever enabled, the adjustment must be printed.** ✅ *Updated 2026-10-30: the bill's bottom is now verified, so a position for that line can be specified — but it changes the owner's layout and therefore needs approval alongside [OD-6](OWNER-DECISIONS.md#od-6).* This coupling must not be forgotten |
 | **Depends on** | **OD-7**, **OD-5** |
 
 ---
@@ -423,7 +423,7 @@ Full control-by-control analysis is in
 
 | | |
 |---|---|
-| **Prevention** | `[OBSERVED]` / `[UNSEEN]` / `[PROPOSED]` classification; **M27 is explicitly blocked**; every `[PROPOSED]` element must be switchable off **without altering the layout**; both `CLAUDE.md` files forbid inventing an `[UNSEEN]` element or searching for a substitute reference |
+| **Prevention** | ✅ **Largely discharged 2026-10-30 — the workbook was inspected, so the layout is evidence rather than inference.** `[VERIFIED]` / `[PROPOSED]` classification retained; **M27 remains conditionally ready, not ready**; every `[PROPOSED]` element must still be switchable off **without altering the layout**; a signature block, amount in words, tax line and invoice number are **verified absent** and must not be added. ⚠️ **Residual exposure moves to page setup** — paper, orientation and scaling were never set in the file ([OD-6](OWNER-DECISIONS.md#od-6)) — **and to the date order** ([OD-26](OWNER-DECISIONS.md#od-26)) |
 | **Detection** | Review of the print layout against `UI-UX-SPECIFICATION.md §12.2a` |
 | **Recovery** | Remove the invented content; obtain real evidence |
 | **Test coverage** | Print snapshots cover only the observed top section; the printed-sample sign-off is a **go-live gate** |

@@ -1178,7 +1178,8 @@ long names wrapping in full, and the counter slip.
 invoice number and the credit payment block (**OD-22**).
 
 **Binding rules.** Every `[PROPOSED]` element must be **switchable off by configuration without
-altering the layout** — a proposed field may not be load-bearing. Never invent an `[UNSEEN]` element.
+altering the layout** — a proposed field may not be load-bearing. **Never add an element that the
+workbook inspection found absent** (signature block, amount in words, tax line, invoice number).
 The payment block is **credit-only** until the owner says otherwise. The client renders the payload
 verbatim: it adds no field, computes no total, and invents no header text; empty optional business
 fields print **nothing**, never a placeholder.

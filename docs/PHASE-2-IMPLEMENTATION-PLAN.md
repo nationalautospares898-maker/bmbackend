@@ -416,7 +416,7 @@ frontend must never stub a business rule to unblock itself.**
 | **Acceptance** | FR-PRINT-010…021 except the bottom section; **AC-FE-7** |
 | **Risks** | Print drift when the app is restyled → `print.css` fully isolated (ADR-028) + a structural test |
 | **Exit gate** | Print snapshots approved for the top section |
-| **Must not build yet** | ⛔ **The bottom section — grand total, signature, footer, row count, print area (OD-5).** ⛔ **Final placement of the invoice number and payment block (OD-22).** ⛔ Do not invent any `[UNSEEN]` element. ⛔ Do not put the payment block on cash bills |
+| **Must not build yet** | ✅ *The bottom section is now VERIFIED from the workbook and may be built.* ⛔ **Final placement of the credit payment block (OD-22)** — the verified footer has no slot for it. ⛔ **Do not freeze the printed date order** until [OD-26](OWNER-DECISIONS.md#od-26) is answered. ⛔ Do not add a signature block, amount in words, tax line or any invoice number — all are **verified absent** from the original. ⛔ Do not put the payment block on cash bills. ⛔ Do not fix paper size or scaling — the workbook sets none (OD-6) |
 
 #### M21 — Daily Bills and Credit Bills
 | | |
@@ -495,7 +495,7 @@ frontend must never stub a business rule to unblock itself.**
 |---|---|
 | **Goal** | Grand total, signature/footer, row count, print area, and the final placement of the invoice number and payment block |
 | **Prerequisites** | M20 · **OD-5 evidence** (the workbook, a bottom-scrolled screenshot, **or** a photo of a printed bill) · **OD-22 placement** on a reviewed sample · OD-6 paper |
-| **Blocked because** | The entire lower section is `[UNSEEN]` and the owner has confirmed they cannot currently supply further evidence. **The grand total is the most-read number on the bill; guessing it is not acceptable for a production document** |
+| **Conditional because** | ✅ The workbook was supplied and inspected on 2026-10-30, so the layout — including the `GRAND TOTAL` row — is **verified** and fully buildable. 🔴 The **exit gate** is untouched by the file: it sets **no page setup, no print area, no paper size, no orientation and no scaling**, so a **printed sample on the shop's own printer** ([OD-6](OWNER-DECISIONS.md#od-6)) is still required, and the **date order** is open ([OD-26](OWNER-DECISIONS.md#od-26)) |
 | **Must not build yet** | ⛔ **Everything in this milestone.** Do not infer the layout from convention, do not search for a substitute reference, do not describe the layout as verified |
 
 #### M28 — Go-live — **BLOCKED**

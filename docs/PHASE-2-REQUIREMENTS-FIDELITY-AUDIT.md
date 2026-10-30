@@ -48,7 +48,7 @@ All 28 pre-existing files were read in full. **No file was modified during the i
 | [`DECISIONS.md`](DECISIONS.md) | ADR-001…022 + index of 023…033 | Global ADR numbering |
 | [`PHASE-1-EXIT-CRITERIA.md`](PHASE-1-EXIT-CRITERIA.md) | The 19 criteria and their **living** evaluation | Supersedes the closure reports as the maintained record |
 | `../../bmfrontend/docs/PRD.md` | Client requirements; **defines** `FR-BILL-*`, `FR-CREDIT-02x`, `FR-RPT-02x`, `FR-PRINT-01x/02x`, `FR-OFFLINE-014/015`, `FR-NAV-*`, `FR-ITEM-*`, `FR-UI-PERM-*`, AC-FE-* | |
-| `../../bmfrontend/docs/UI-UX-SPECIFICATION.md` | Screens; **§12** the printed bill and its `[OBSERVED]`/`[UNSEEN]`/`[PROPOSED]` classification | |
+| `../../bmfrontend/docs/UI-UX-SPECIFICATION.md` | Screens; **§12** the printed bill and its `[VERIFIED]`/`[PROPOSED]` classification *(read from the owner's workbook, 2026-10-30)* | |
 | `../../bmfrontend/docs/DECISIONS.md` | ADR-023…033 | ADR-033 is the only `accepted` ADR |
 | `../../bmfrontend/docs/ARCHITECTURE.md`, `API-INTEGRATION.md`, `TESTING-STRATEGY.md` | Client structure, consumption of the contract, client test layers | Subordinate to backend contract docs |
 | `bmbackend/CLAUDE.md`, `bmfrontend/CLAUDE.md` | AI-session **rules** (not specifications) | Must agree with the specs |
