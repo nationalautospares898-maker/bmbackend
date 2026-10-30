@@ -498,8 +498,13 @@ new evidence. **Twelve of twelve hold.** The two that were at risk:
 | `origin` (fetch) | `https://github.com/nationalautospares898-maker/bmfrontend.git` | `https://github.com/nationalautospares898-maker/bmbackend.git` |
 | `origin` (push) | `git@github.com:nationalautospares898-maker/bmfrontend.git` | `git@github.com:nationalautospares898-maker/bmbackend.git` |
 | Branch | `main`, tracking `origin/main` | `main`, tracking `origin/main` |
-| **Commit** | **`88495a9be749be6959096ff3266de073519ab9e0`** | **`0482c7a2d9d185402c541efbcfaf4a7219e59b36`** |
+| **Baseline commit** | **`88495a9be749be6959096ff3266de073519ab9e0`** | **`0482c7a2d9d185402c541efbcfaf4a7219e59b36`** |
+| Follow-up commit *(this inspection record)* | **`832997b917b889dc093674dd8e64ab50c4d0d4e9`** | **`91a18df0e522299ac5871410ad6492eb84ffb379`** |
 | Local HEAD = remote `main` | ✅ **Yes** | ✅ **Yes** |
+
+> A third commit carries this table itself — a document cannot contain its own commit hash. The
+> exact current hashes are always `git -C <repo> rev-parse HEAD`, and both repositories are in sync
+> with `origin/main`.
 | Ahead / behind | `0 / 0` | `0 / 0` |
 | Working tree | clean | clean |
 | Files on the remote | **10** | **26** |
