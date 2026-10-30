@@ -1,0 +1,57 @@
+# --- Secrets and environment -------------------------------------------------
+# Never commit real configuration. Only .env.example, with placeholders.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+secrets/
+credentials.json
+
+# --- Owner business records --------------------------------------------------
+# The owner's original bill workbook is their business record, not a project
+# artifact. Its contents are specified in docs/PHASE-2-CLOSURE-ADDENDUM-2.md.
+ANAS_*.xlsx
+reference/owner-original-bill.xlsx
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version
+
+# --- Tooling and test output -------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+
+# --- Local storage and logs --------------------------------------------------
+*.log
+logs/
+storage/
+uploads/
+*.sqlite3
+*.db
+
+# --- Editor and OS -----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
