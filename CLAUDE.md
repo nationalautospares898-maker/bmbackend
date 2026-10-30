@@ -1,5 +1,8 @@
 # CLAUDE.md — `bmbackend`
 
+> **Current Phase 2 design disposition (2026-10-30):** [Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) is the current cross-cutting decision record. It resolves superseded open labels and defines the Phase 3 implementation baseline. Historical closure reports/addenda remain unchanged; legal, physical and operational gates remain gates. It does not represent implementation or test completion.
+
+
 Persistent engineering context for AI-assisted work in this repository. Keep it loaded. It is
 **rules**, not a specification — the specifications are in `docs/`.
 
@@ -33,11 +36,10 @@ things. Then read `docs/PHASE-2-IMPLEMENTATION-PLAN.md` and check your milestone
 |---|---|
 | **No customer-visible invoice numbering** (OD-3 re-answered) | Keep the **internal** sale reference; **never print or render it**; never invent a replacement scheme. `AC-1a` withdrawn, gapless question **moot**. Statutory exposure is **OD-25** (go-live gate) |
 | **Four primary actions** (OD-14 re-answered) | `Print Bill` · `Credit Bill` · `Save a Draft` · `Clear Draft`. **No fifth.** `Clear Draft` must never touch a finalised sale or an unresolved `pending_finalizations` row |
-| **No decimals on `PRICE` / `GRAND TOTAL`** (OD-23 amended) | Display only. **Never round or truncate a stored value.** A fractional amount raises a validation warning — recorded conflict, `BLOCKS-GO-LIVE` |
+| **No decimals on `PRICE` / line `TOTAL` / `GRAND TOTAL`** | Follow the complete Phase 3 input, exact calculation, storage, no-rounding and display policy in `docs/PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md` §3; fractional monetary values are rejected before finalization |
 | **The full bill layout** (OD-5 ✅ **RESOLVED 2026-10-30**) | **The workbook was supplied and inspected.** Layout, geometry, typography, borders, merges, number formats and both logos are **verified**; the header is **`QTY`**; the sheet has **no formulas**. ⚠️ It sets **no page setup at all**, so paper/orientation/scaling stay with **OD-6**, and the date order became **OD-26** |
 
-**Still open:** OD-7 (calculation policy), OD-23's fractional conflict, OD-25, **OD-26** (printed
-date order), OD-1/2/4/6/8/19/22/24. T3-05 remains due before M19/M25 exit.
+**Current dispositions:** OD-3/OD-5/OD-7/OD-14/OD-21/OD-22/OD-23/OD-26 are design-resolved as requirements or documented defaults. OD-25 and the true owner, legal, physical and operational gates remain. Read the dated design addendum first; it supersedes stale status text in older records.
 ✅ **Both repositories are now connected to GitHub and the documentation baseline is pushed**, so
 M1's repository gate is met — see `docs/PHASE-2-CLOSURE-ADDENDUM-2.md §7`.
 

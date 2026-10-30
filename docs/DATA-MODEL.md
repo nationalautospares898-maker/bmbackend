@@ -1,5 +1,8 @@
 # Data Model — `bmbackend`
 
+> **Current Phase 2 design disposition (2026-10-30):** [Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) is the current cross-cutting decision record. It resolves superseded open labels and defines the Phase 3 implementation baseline. Historical closure reports/addenda remain unchanged; legal, physical and operational gates remain gates. It does not represent implementation or test completion.
+
+
 | Field | Value |
 |---|---|
 | Status | **Phase 1 proposal — no schema exists, no migration has been written or run** |

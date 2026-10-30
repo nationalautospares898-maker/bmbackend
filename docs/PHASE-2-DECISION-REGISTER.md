@@ -1,5 +1,8 @@
 # Phase 2 — Decision Register
 
+> **Current Phase 2 design disposition (2026-10-30):** [Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) is the current cross-cutting decision record. It resolves superseded open labels and defines the Phase 3 implementation baseline. Historical closure reports/addenda remain unchanged; legal, physical and operational gates remain gates. It does not represent implementation or test completion.
+
+
 | Field | Value |
 |---|---|
 | Status | **Living Phase 2 record** |
@@ -26,8 +29,8 @@
 | ID | Decision | Status | Owner approval needed | Affects |
 |---|---|---|---|---|
 | [P2-D-01](#p2-d-01) | Phase 2 artifacts live in `bmbackend/docs/`; `bmfrontend` carries a pointer index | **accepted** | No | Documentation governance |
-| [P2-D-02](#p2-d-02) | Build the in-transaction numbering design now; OD-3 gates the *policy statement*, not the module | **accepted** *(engineering scope)* | **`OD-3-A` acknowledgement still requested** | M9, NFR-DATA-005, AC-1/AC-1a |
-| [P2-D-03](#p2-d-03) | Money rounding is an explicit policy object resolved from settings and published via bootstrap | **accepted** *(mechanism)* | **The policy *values* remain [OD-7](OWNER-DECISIONS.md#od-7) — unapproved** | M4, M17, both money suites |
+| [P2-D-02](#p2-d-02) | Internal sale reference; no current customer-visible numbering or gapless requirement | **accepted** | No; OD-3 is resolved for current scope | M9, internal audit/recovery |
+| [P2-D-03](#p2-d-03) | Versioned policy object; whole-INR/no-rounding default defined in addendum §3 | **accepted** *(mechanism)* | No; values are a documented design default, not owner/accountant approval | M4, M17, M20 |
 | [P2-D-04](#p2-d-04) | Explicit source-of-truth hierarchy | **accepted** | No | All documentation |
 | [P2-D-05](#p2-d-05) | The import-boundary linter is a merge blocker from M1 | **accepted** | No | M1 onward |
 | [P2-D-06](#p2-d-06) | Claim the idempotency key **before** acquiring inventory locks | **accepted** | No | M10 |
@@ -57,8 +60,7 @@ owner decision the design *depends on* has been answered.
 > - **No ADR was promoted.** ADR-001…032 remain `proposed`; ADR-033 remains the only `accepted` one
 >   (owner-specified). Phase 2 has no authority to accept an ADR, and `P2-D-*` is a separate
 >   namespace precisely so it cannot be mistaken for one.
-> - **No owner decision was answered.** `OD-3-A` is still an open request; OD-7's values remain
->   unapproved; OD-1/2/4/5/6/8/19/22/24 are untouched.
+> - Current owner-decision dispositions are in the 2026-10-30 Design Completion Addendum. OD-3 is resolved for current product scope; OD-25 remains the legal gate. OD-7 values are now a documented engineering default, not owner/accountant approval.
 
 ---
 
@@ -107,7 +109,11 @@ to them.
 ---
 
 <a id="p2-d-02"></a>
-## P2-D-02 — Build the gapless numbering design now; OD-3 gates the policy statement, not the module
+## P2-D-02 — Internal sale reference design; no current visible-number or gapless requirement
+
+> **Current disposition:** The 2026-10-30 Design Completion Addendum supersedes this section's earlier open-scope wording. P2-D-02 no longer asserts a gapless customer invoice series; only the internal reference remains for current scope. P2-D-03's complete design default is specified in addendum §3; this remains an engineering default, not owner/accountant approval.
+
+
 
 **Status** **accepted** *(engineering scope; `OD-3-A` acknowledgement still requested)* · **Owner approval: the gapless *policy* remains OD-3** ·
 **Related** [OD-3](OWNER-DECISIONS.md#od-3), ADR-009, FR-SALE-004, NFR-DATA-005, AC-1, audit **CF-1**
@@ -181,7 +187,11 @@ implementation would be identical when it does start.
 ---
 
 <a id="p2-d-03"></a>
-## P2-D-03 — Money rounding is an explicit policy object, resolved from settings and published via bootstrap
+## P2-D-03 — Money policy object and v1 whole-INR policy default
+
+> **Current disposition:** The 2026-10-30 Design Completion Addendum supersedes this section's earlier open-scope wording. P2-D-02 no longer asserts a gapless customer invoice series; only the internal reference remains for current scope. P2-D-03's complete design default is specified in addendum §3; this remains an engineering default, not owner/accountant approval.
+
+
 
 **Status** **accepted** *(mechanism only)* · **Owner approval: the policy *values* remain [OD-7](OWNER-DECISIONS.md#od-7) — still unapproved** ·
 **Related** OD-7, ADR-013, ADR-032, FR-SALE-003, NFR-DATA-002

@@ -1,5 +1,8 @@
 # Phase 2 — Phase 3 Implementation Plan
 
+> **Current Phase 2 design disposition (2026-10-30):** [Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) is the current cross-cutting decision record. It resolves superseded open labels and defines the Phase 3 implementation baseline. Historical closure reports/addenda remain unchanged; legal, physical and operational gates remain gates. It does not represent implementation or test completion.
+
+
 | Field | Value |
 |---|---|
 | Status | **Living Phase 2 record.** The ordered plan Phase 3 executes |
@@ -58,10 +61,10 @@ expand→migrate→contract discipline on live financial data.
 |---|---|---|---|---|---|---|
 | **T3-06** | **Remove the customer-visible invoice number end to end.** Drop `invoice_number` from `print_payload`; keep it on the `invoice` resource as an internal reference; remove every client-side rendering path; retire `FR-PRINT-019` | `print_payload` contains **no** invoice-number field; a **structural** test asserts no invoice number is rendered in `src/`; `test_no_invoice_number_in_print_payload` passes; the `invoice` resource still exposes the internal reference to `reports.sales.read`; `GET /invoices?idempotency_key=` (T3-01) still works | [OD-3](OWNER-DECISIONS.md#od-3) ✅ answered | **M12**, **M20** | None — answered | **Open** |
 | **T3-07** | **Update credit confirmation and payment history** to stop referencing an invoice number. The confirmation states customer, outstanding, due date and **"Stock has been updated."** (FR-CREDIT-013/026); Daily Bills and Credit Bills identify invoices by **date + customer + amount**, with the internal reference available on detail views only | `test_credit_confirmation_states_stock_updated` asserts **no** invoice number is shown; list screens render no invoice-number column; invoice detail may show the internal reference labelled as internal | T3-06 | **M19**, **M21** | None — answered | **Open** |
-| **T3-08** | **Implement the no-decimal display for `PRICE` and `GRAND TOTAL`** without corrupting monetary precision. Formatting happens only at the render boundary; stored values untouched | `240.00` → `240`; `3850.00` → `3850`; a **property test** asserts the stored decimal is unchanged by formatting; ⚠️ a **fractional** amount reaching a zero-decimal field raises a **visible validation warning** and is **never silently rounded or truncated** | [OD-23](OWNER-DECISIONS.md#od-23) amended | **M20** | 🔴 **[OD-23](OWNER-DECISIONS.md#od-23) fractional-amount conflict** must be resolved before go-live | **Open — partly gated** |
+| **T3-08** | **Implement the no-decimal display for `PRICE` and `GRAND TOTAL`** without corrupting monetary precision. Formatting happens only at the render boundary; stored values untouched | `240.00` → `240`; `3850.00` → `3850`; a **property test** asserts the stored decimal is unchanged by formatting; a fractional monetary input or computed amount is rejected before finalization with a visible blocking validation error; no rounding or truncation | [OD-23](OWNER-DECISIONS.md#od-23) amended | **M20** | Design default complete per addendum §3; implement and pass M4/M20 validation/print tests | **Design complete — implementation open** |
 | **T3-09** | **Implement the four primary actions** `Print Bill` · `Credit Bill` · `Save a Draft` · `Clear Draft`, with `Clear Draft`'s safety rules | All four labels present and **no fifth** primary action; `Clear Draft` requires confirmation stating the line count, **never** touches a finalised sale, and is **disabled while an unresolved `pending_finalizations` row exists** (AC-REC-4 extended); `Save a Draft` calls `PUT /drafts/{id}` only | [OD-14](OWNER-DECISIONS.md#od-14) re-answered | **M17**, **M18**, **M19** | None — answered | **Open** |
 | **T3-10** | **Reconcile the printed bill against the verified workbook layout.** ✅ *The workbook was supplied and inspected 2026-10-30; the layout, geometry, typography, borders, merges and number formats are recorded in [PHASE-2-CLOSURE-ADDENDUM-2.md §3](PHASE-2-CLOSURE-ADDENDUM-2.md) and `../../bmfrontend/docs/UI-UX-SPECIFICATION.md §12.1`.* Remaining scope: make the print snapshot match it | Print snapshot reproduces header, field block, **25-row** item table with header **`QTY`**, `GRAND TOTAL` (11 pt bold, value in the last column), `THANK YOU  VISIT AGAIN`, both dealer-credit lines and both logos; column proportions follow the measured widths (4.664 / 19.777 / 3.332 / 8.000 / 10.441 chars); **no signature block, no amount in words, no invoice number, no tax line** | ✅ Workbook supplied and inspected | **M20**, **M27** | ✅ **[OD-5](OWNER-DECISIONS.md#od-5) resolved.** Printed-sample sign-off remains **[OD-6](OWNER-DECISIONS.md#od-6)** | **Open — unblocked** |
-| **T3-11** | **Resolve the printed date order.** The workbook formats the date cell as **`mm-dd-yyyy`**; every other project document assumed `dd-mm-yyyy`. The sole example date (6 June 2026) reads identically both ways, so the earlier `[OBSERVED]` classification was an **inference** | The printed date format comes from a **single** configurable source, not a scattered literal; a test renders a date whose day ≠ month (e.g. 7 August) and asserts the chosen order; the chosen order is recorded in the print specification with its OD reference | Workbook inspection (complete) | **M20**, **M27** | 🔴 **[OD-26](OWNER-DECISIONS.md#od-26)** — owner must choose the order | **Open — gated on OD-26** |
+| **T3-11** | **Resolve the printed date order.** The workbook formats the date cell as **`mm-dd-yyyy`**; every other project document assumed `dd-mm-yyyy`. The sole example date (6 June 2026) reads identically both ways, so the earlier `[OBSERVED]` classification was an **inference** | The printed date format comes from a **single** configurable source, not a scattered literal; a test renders a date whose day ≠ month (e.g. 7 August) and asserts the chosen order; the chosen order is recorded in the print specification with its OD reference | Workbook inspection (complete) | **M20**, **M27** | Resolved by workbook evidence: `MM-DD-YYYY` from cell E7; sample acceptance confirms interpretation | **Design complete — implementation open** |
 | **T3-12** | **Extract and embed the two logo images.** `image1.jpeg` (TATA, 55×57 px, 2,163 bytes) and `image2.jpeg` (Ashok Leyland, 58×64 px, 2,797 bytes) live inside the workbook package at `xl/media/`. Copy them into the frontend print assets at their measured print sizes and footer positions | Both images render in the printed footer — TATA at the left edge, Ashok Leyland at the right, aligned with the dealer-credit lines; sizes ≈ 20×21 pt and 21×23 pt; print CSS embeds them so printing works offline; **the owner's workbook is not modified and is not committed** | Workbook inspection (complete) | **M20**, **M27** | ℹ️ Trademark use is the owner's to confirm — recorded, not resolved | **Open — unblocked** |
 
 **T3-10 is unblocked, and T3-11/T3-12 are new** — all three arise from the 2026-10-30 workbook
@@ -490,19 +493,19 @@ frontend must never stub a business rule to unblock itself.**
 | **Exit gate** | Restore drill recorded with a date, duration, restored timestamp and result |
 | **Must not build yet** | ⛔ Do not add a second API replica without first moving the rate limiter to a shared store |
 
-#### M27 — Print bottom section — **BLOCKED**
+#### M27 — Print layout completion and physical validation (Phase 3 acceptance gate)
 | | |
 |---|---|
-| **Goal** | Grand total, signature/footer, row count, print area, and the final placement of the invoice number and payment block |
-| **Prerequisites** | M20 · **OD-5 evidence** (the workbook, a bottom-scrolled screenshot, **or** a photo of a printed bill) · **OD-22 placement** on a reviewed sample · OD-6 paper |
-| **Conditional because** | ✅ The workbook was supplied and inspected on 2026-10-30, so the layout — including the `GRAND TOTAL` row — is **verified** and fully buildable. 🔴 The **exit gate** is untouched by the file: it sets **no page setup, no print area, no paper size, no orientation and no scaling**, so a **printed sample on the shop's own printer** ([OD-6](OWNER-DECISIONS.md#od-6)) is still required, and the **date order** is open ([OD-26](OWNER-DECISIONS.md#od-26)) |
-| **Must not build yet** | ⛔ **Everything in this milestone.** Do not infer the layout from convention, do not search for a substitute reference, do not describe the layout as verified |
+| **Goal** | Implement the verified `GRAND TOTAL` and footer, 25-row table, A5 profile and credit-only payment block placement; no customer-visible invoice number or signature block |
+| **Prerequisites** | M20; design baseline and workbook are complete per [Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) |
+| **Acceptance gate** | Physical printer/paper comparison, cash and credit samples, no clipping, date interpretation and owner sign-off remain Phase 3 acceptance; workbook page setup is absent |
+| **Must not build yet** | Nothing in the design scope; implement the documented workbook-faithful A5 profile. Physical printer/sample/owner sign-off is a Phase 3 acceptance gate, not a design prerequisite |
 
 #### M28 — Go-live — **BLOCKED**
 | | |
 |---|---|
 | **Goal** | Production release |
-| **Prerequisites** | M26, M27 · **OD-1, OD-2, OD-4, OD-6, OD-8, OD-19, OD-24** · the full `DEPLOYMENT.md §11.2` checklist |
+| **Prerequisites** | M26, M27 · **OD-1, OD-2, OD-4, OD-6, OD-8, OD-19, OD-24, OD-25** · the full `DEPLOYMENT.md §11.2` checklist |
 | **Includes** | Opening stock loaded via `opening` movements and **physically verified**; products/prices/aliases loaded and spot-checked by the owner; users created with real names and **all seeded credentials rotated**; devices registered with **full-disk encryption** on counter machines; **printed sample signed off**; **staff trained** on reprint-vs-new-sale, the not-confirmed state and counter slips, the oversell policy, and what offline does **not** do; owner briefed that `ESTIMATE` documents are not tax invoices; break-glass stored outside the system |
 | **Must not build yet** | ⛔ **The system may not be used in the shop until every gate is cleared** |
 
@@ -530,69 +533,26 @@ frontend must never stub a business rule to unblock itself.**
 | M20 → **M27** | The top must be approved before the bottom is designed |
 | M26, M27 → **M28** | Go-live needs both |
 
-**Critical path:** M1 → M2 → M3 → M9 → M10 → M11 → M13 → M26 → M28, with M27 a parallel blocked
-branch gated on owner evidence rather than on engineering.
+**Critical path:** M1 → M2 → M3 → M9 → M10 → M11 → M13 → M26 → M28. M27 runs as a parallel print branch after M20; physical printer validation is a Phase 3 acceptance gate.
 
 ---
 
-## 4. What is blocked and what is not
+## 4. Current Phase 3 readiness and external gates — 2026-10-30
 
-**Reconciled at Phase 2 closure.** The four pre-flight documentation tasks are complete, so no
-milestone is blocked on documentation. Every milestone was re-checked against prerequisites,
-required decision approvals, contracts, tests, acceptance criteria, risk mitigations and exit
-conditions.
+The 28 milestones have complete design scope and acceptance criteria and are **design-ready to enter Phase 3**, subject to their documented dependency order. This does not mean implementation, testing, physical acceptance, legal clearance or production readiness. The previous 26/1/1/1 readiness table was a dated pre-completion snapshot and is superseded for current planning by this section; the prior closure reports preserve that history.
 
-**Recalculated 2026-10-30 after the workbook inspection and the GitHub connection — not carried
-over.** *(Previous tally: 24 ready / 2 conditional / 2 blocked.)*
-
-| Status | Count | Milestones |
+| Work | Phase 3 status | Required evidence before exit/release |
 |---|---|---|
-| ✅ **Ready** — no unmet owner decision; listed predecessors still apply | **26** | **M1**, M2, M3, M5, M6, M7, M8, **M9**, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26 |
-| 🟡 **Conditionally ready** — scoped work may proceed; one input remains open | **1** | **M4** (build the policy-parameterised engine; **OD-7** still freezes the policy values and expected-value assertions) |
-| 🟡 **Conditionally ready — print evidence** | **1** | **M27** — ✅ the workbook has been **supplied and inspected**, so the layout is fully buildable and testable. Its **exit gate** still needs a **printed sample on the shop's printer** ([OD-6](OWNER-DECISIONS.md#od-6)) and the date order ([OD-26](OWNER-DECISIONS.md#od-26)) |
-| ⛔ **Blocked — go-live approvals** | **1** | **M28** (`OD-1`, `OD-2`, `OD-4`, `OD-6`, `OD-8`, `OD-19`, **`OD-23` fractional conflict**, `OD-24`, **`OD-25`** + operational gates) |
+| M1–M3, M5–M26 | Design-ready; sequence and prerequisites in §2 apply | Their existing milestone tests and acceptance criteria |
+| M4 money | Design-ready to implement §3 of the Design Completion Addendum | Exact input/calculation/storage/display tests; record any owner/accountant change to the default before M4 exit |
+| M27 print | Design-ready to implement the workbook-faithful template and proposed profile | Real printer and paper sample, cash and credit print checks, owner sign-off |
+| M28 go-live | Design complete; production use remains gated | Qualified tax/numbering advice; confirmed business identity; hosting/alert recipient; staff training; loaded/verified catalog and stock; restore, security and operational evidence |
 
-**What changed and why:**
-
-- **M9 moves conditional → ready.** [OD-3](OWNER-DECISIONS.md#od-3) is answered. The gapless question
-  is **moot**, `AC-1a` is **withdrawn**, and the module builds an **internal-only** reference. Nothing
-  about it now waits on an owner decision.
-- **M27 moves blocked → conditionally ready.** The workbook arrived and was inspected, so geometry,
-  typography, borders, number formats, the **`QTY`** header and both logo images are now **verified**
-  (**T3-10** unblocked, **T3-12** added). It is **not** promoted to *ready*, because its exit gate —
-  a **printed sample on the shop's own printer** — is untouched by the file: the workbook sets **no
-  page setup, no print area, no paper size, no orientation and no scaling** at all
-  ([OD-6](OWNER-DECISIONS.md#od-6)), and the **date order** is newly open
-  ([OD-26](OWNER-DECISIONS.md#od-26), **T3-11**).
-- **M4 stays conditional.** The owner answered *display*, not *calculation*. **OD-7 is untouched.**
-- **M1 moves conditional → ready.** Its blocking input was push authentication, which is now
-  resolved: both repositories are connected and the documentation baseline is pushed to `main`
-  (see [PHASE-2-CLOSURE-ADDENDUM-2.md §7](PHASE-2-CLOSURE-ADDENDUM-2.md)). The remaining M1 scope —
-  manifests, linters, CI and the import-boundary merge blocker — has no unmet owner dependency.
-
-**27 of 28 milestones can start now** — 24 unconditionally plus M1's local scope. **Phase 3 is not
-wholly unblocked:** M27 and M28 remain blocked, and three milestones carry tasks gated on owner
-input (T3-08 on OD-23, T3-10 on OD-5/OD-6, M1's exit on GitHub auth).
-
-**25 of 28 milestones have no open owner or go-live gate on the described work** — 23 are decision-ready and M4/M9 are conditionally ready. M1 is separately conditional on repository identity and GitHub access. This is not evidence that implementation has started: milestones still follow the strict predecessor order above, and M1 cannot satisfy its repository/CI exit gate until access is confirmed. The two policy-conditional
-ones are **not** blocked from being built; only a single acceptance criterion each is unfreezable,
-which is materially narrower than the `BLOCKS-IMPLEMENTATION` the register originally recorded
-(now corrected to `BLOCKS-TESTING` — `P2-D-02`, `P2-D-03`).
-
-**What each conditionally-ready milestone must not do:**
-
-| Milestone | Permitted now | ⛔ Forbidden until the gate clears |
-|---|---|---|
-| **M1** repository and CI | Prepare the local skeleton and CI definitions against the documented conventions | Do not initialise/push remote repositories until the two repository URLs and owner-provided account access are confirmed; do not claim CI is configured until both repositories report green workflows |
-| **M4** money | Build `MoneyPolicy`, `resolve_policy()`, the algorithm, and property tests across **all** policy combinations | Freeze production policy values · write expected-value assertions assuming the default · hardcode any rounding constant outside the resolver |
-| **M9** numbering | Build in-transaction allocation, lazy FY series creation, the 20-way concurrency test, the FY-boundary test | State gaplessness as a business invariant or release criterion · treat `test_no_gaps_in_committed_numbers` as a gate · enable per-counter series |
-
-**Five Phase 3 application-change / alignment tasks** (§1.1) must land with their milestones: **T3-02**
-(`businesses.timezone`) with M2/M9, **T3-03** (`invoices.money_policy_version`) with M10, **T3-01**
-(invoice lookup by idempotency key) with M12, **T3-04** (series reconciliation) with M9/M26, and **T3-05** (credit-screen specification/test cleanup) before M19/M25 exit.
+No Phase 3 application code, migrations, or tests were created by this documentation update. P1/P2 legal, owner, physical-printer, data-loading, training, monitoring and deployment gates remain explicit release controls. See [Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) §§2–7 for the normative disposition and [Deployment](DEPLOYMENT.md) for release evidence.
 
 ---
 
+## 5. Related documents
 ## 5. Related documents
 
 [`PHASE-2-IMPLEMENTATION-BLUEPRINT.md`](PHASE-2-IMPLEMENTATION-BLUEPRINT.md) ·

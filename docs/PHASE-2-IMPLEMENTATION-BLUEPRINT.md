@@ -1,5 +1,8 @@
 # Phase 2 — Implementation Blueprint
 
+> **Current Phase 2 design disposition (2026-10-30):** [Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) is the current cross-cutting decision record. It resolves superseded open labels and defines the Phase 3 implementation baseline. Historical closure reports/addenda remain unchanged; legal, physical and operational gates remain gates. It does not represent implementation or test completion.
+
+
 | Field | Value |
 |---|---|
 | Status | **Living Phase 2 record.** Proposed target design for Phase 3 |
@@ -816,6 +819,10 @@ and is preserved unchanged**, except for the additive corrections below. It is n
 
 ## 7. Money engine design
 
+> **Current v1 policy (2026-10-30):** Use the complete whole-INR/no-rounding default in [Design Completion Addendum §3](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md). Earlier policy-combination sketches below explain the configurable mechanism; they do not override the selected v1 default or imply owner/accountant approval.
+
+
+
 **Proposed — illustrative signature only, not implementation code.** This is the `P2-D-03`
 mechanism that lets the money module be built before OD-7 selects its values.
 
@@ -1141,7 +1148,11 @@ be created offline. The sync operation registry contains exactly `draft.upsert`,
 
 ---
 
-## 10. Print architecture — buildable now, gated at the bottom
+## 10. Print architecture — design-ready; physical acceptance in Phase 3
+
+> **Current print decisions:** No customer-visible invoice number. Use workbook-faithful `MM-DD-YYYY`; proposed A5 portrait at 8 mm margins, 100% scale; place `Paid / Balance / Due` for credit bills directly below `GRAND TOTAL`. See [Design Completion Addendum §4](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md). Physical sample and owner sign-off remain M27 acceptance.
+
+
 
 ```mermaid
 graph TB
@@ -1292,7 +1303,7 @@ graph TD
     M24["M24 Returns"]
     M25["M25 FE P1 screens"]
     M26["M26 Hardening<br/>perf · restore drill · monitoring"]
-    M27["M27 Print bottom<br/>BLOCKED OD-5 + OD-22"]
+    M27["M27 Print profile + credit block<br/>design-ready; physical sign-off gate"]
     M28["M28 Go-live<br/>BLOCKED OD-1/2/4/6/8/19/24"]
 
     M1 --> M2 --> M3 --> M5 & M7 & M8
@@ -1336,8 +1347,8 @@ graph TD
 
     classDef blocked fill:#f8d7da,stroke:#b3261e
     classDef gatefix fill:#fff3cd,stroke:#9a5b00
-    class M27,M28 blocked
-    class M14,M19,M9 gatefix
+    class M28 blocked
+    class M14,M19,M9,M27 gatefix
 ```
 
 Solid arrows are build dependencies; dashed arrows are **contract-only** dependencies — the frontend

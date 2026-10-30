@@ -1,5 +1,8 @@
 # bmbackend
 
+> **Current Phase 2 design disposition (2026-10-30):** [Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) is the current cross-cutting decision record. It resolves superseded open labels and defines the Phase 3 implementation baseline. Historical closure reports/addenda remain unchanged; legal, physical and operational gates remain gates. It does not represent implementation or test completion.
+
+
 Backend API for the **National Auto Spares** shop management system — billing, inventory, credit,
 purchases and reporting for an automobile spare-parts shop.
 
@@ -147,10 +150,10 @@ recommended defaults.
 
 | ID | Question | What is actually blocked |
 |---|---|---|
-| [OD-3](docs/OWNER-DECISIONS.md#od-3) | Sequential selected — **is gapless numbering required?** | The numbering **policy statement and its acceptance test**. The design is buildable now — it satisfies either answer ([`P2-D-02`](docs/PHASE-2-DECISION-REGISTER.md#p2-d-02)) |
-| [OD-7](docs/OWNER-DECISIONS.md#od-7) | Principles selected — **precision and rounding method still open** | The money **policy values and expected-value assertions**. The engine is buildable now as a policy-parameterised algorithm ([`P2-D-03`](docs/PHASE-2-DECISION-REGISTER.md#p2-d-03)) |
-| [OD-5](docs/OWNER-DECISIONS.md#od-5) | **Bill's lower section — owner cannot supply further evidence yet** | Print template, **bottom section only**. Header, field block and item table are buildable |
-| [OD-22](docs/OWNER-DECISIONS.md#od-22) | Invoice number + credit payment block — **inclusion selected, placement unverified** | **Final placement** only; both elements stay switchable |
+| [OD-3](docs/OWNER-DECISIONS.md#od-3) | No customer-visible number; retain internal sale reference | Current design is resolved; OD-25 legal determination gates any statutory visible serial |
+| [OD-7](docs/OWNER-DECISIONS.md#od-7) | Complete v1 money default in the Design Completion Addendum §3 | Engineering default; record any owner/accountant change before M4 exit |
+| [OD-5](docs/OWNER-DECISIONS.md#od-5) | Supplied workbook inspected and layout resolved | Physical print acceptance remains M27 |
+| [OD-22](docs/OWNER-DECISIONS.md#od-22) | Credit block placement default in addendum §4 | Physical sample acceptance at M27 |
 
 **Settled 2026-10-29** — no longer blocking: [OD-21](docs/OWNER-DECISIONS.md#od-21) credit workflow ·
 [OD-23](docs/OWNER-DECISIONS.md#od-23) amount display and blank empty rows ·
@@ -199,7 +202,7 @@ immediately** through the same engine as a cash sale — no mandatory credit-det
 |---|---|
 | **1 — Discovery and documentation** | ✅ **CLOSED** 2026-10-29 — all 19 exit criteria met ([docs/PHASE-1-EXIT-CRITERIA.md](docs/PHASE-1-EXIT-CRITERIA.md)) |
 | **2 — Investigation and implementation planning** | ✅ **CLOSED** — all 12 closure criteria met ([docs/PHASE-2-CLOSURE-REPORT.md](docs/PHASE-2-CLOSURE-REPORT.md)). 11 fidelity findings resolved, 4 critical designs finalised. Documentation only |
-| 3 — Implementation | ⏸ **Not started.** **24 milestones ready, 2 conditionally ready** (M4 money, M9 numbering — build fully, one acceptance criterion each unfreezable); **M27** blocked on OD-5/OD-22, **M28** on the go-live gates. No milestone is blocked on documentation |
+| 3 — Implementation | ⏸ **Not started.** All 28 milestones are design-ready for Phase 3. M27 physical print acceptance and M28 legal/owner/operational go-live gates remain. |
 
 **Neither Phase 1 nor Phase 2 means the application exists, works or has been tested — no code or
 test exists.** Phase 1 produced the documentation foundation; Phase 2 produced the plan to build

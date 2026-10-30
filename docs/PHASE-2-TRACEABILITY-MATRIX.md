@@ -1,5 +1,8 @@
 # Phase 2 — Traceability Matrix
 
+> **Current Phase 2 design disposition (2026-10-30):** [Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) is the current cross-cutting decision record. It resolves superseded open labels and defines the Phase 3 implementation baseline. Historical closure reports/addenda remain unchanged; legal, physical and operational gates remain gates. It does not represent implementation or test completion.
+
+
 | Field | Value |
 |---|---|
 | Status | **Living Phase 2 record** |
@@ -30,15 +33,15 @@ Legend — **Class**: `OC` owner-confirmed · `DD` documented default · `TR` te
 | FR-CREDIT-009, FR-CUST-010 | Credit requires a persisted `customer_id` + name; **nothing else** | **OC** | OD-21 | `customers`, `sales` · **M7/M10** | `CustomerQuickCreate` · **M19** | `customers`, `ck_invoices__credit_customer` | `409 CREDIT_CUSTOMER_REQUIRED` | `test_credit_sale_name_only_customer`, `test_credit_without_customer_rejected_atomically` | M |
 | FR-CREDIT-025 | Initial payment **optional**, not requested at save time | **OC** | OD-21 | `sales` · **M10** | `BillActions` · **M19** | `payments` (absent) | `payment` optional | `test_credit_without_payment_is_unpaid` | M |
 | FR-CREDIT-012, FR-CREDIT-031 | Optional header values supplied are **always persisted** | **OC** | OD-21, PRD §6.9.1 | `sales` · **M10** | `finalize.ts` · **M19** | `invoices.*_snapshot` | finalise `header` | `test_optional_header_fields_persisted` | M |
-| FR-CREDIT-026 | Confirmation states invoice number, outstanding, **"Stock has been updated."** | **OC** | OD-14, ADR-033 | — | confirmation card · **M19** | — | — | `test_credit_confirmation_states_stock_updated` | M |
+| FR-CREDIT-026 | Confirmation states customer, outstanding, due date and **"Stock has been updated."**; never exposes the internal reference | **OC** | OD-3, OD-14, ADR-033 | — | confirmation card · **M19** | — | — | `test_credit_confirmation_states_stock_updated` | M |
 | FR-CREDIT-029 | **No print dialog** at credit save; printable forever afterwards | **OC** | OD-21 | — | **M19/M20** | — | — | `test_credit_save_opens_no_print_dialog` | M |
 | FR-CREDIT-010 | **Payment collection never moves stock** | **OC** | OD-21, F-06 | `credit` · **M11** | `RecordPaymentDialog` · **M21** | `payments`, `payment_allocations` | `POST /payments` | **`test_payment_creates_no_stock_movement`** (invariant **I-2**) | M |
 | FR-CREDIT-003, FR-RPT-023 | **No paid/unpaid control anywhere**; status derived | **OC** | ADR-022, F-07 | `credit` · **M11** | all lists · **M21** | `invoices.payment_status` | **no route sets it** | `test_no_route_sets_payment_status` (OpenAPI scan), `test_no_paid_checkbox` (structural) | M |
 | FR-RPT-028/029 | Credit Bills grouped by **stable `customer_id`**; grouping visual only; **no per-customer entity** | **OC** | OD-21, F-09 | `credit` · **M11** | `CreditBillsScreen` · **M21** | `invoices.customer_id` FK | `GET /credit/customers` | `test_credit_customers_aggregate`, `test_no_per_customer_table`, `test_grouping_survives_rename` | M |
 | FR-RPT-031 | Settled invoices and zero-balance customers stay visible | **OC** | OD-21, F-10 | `credit` · **M11** | **M21** | — | `?include_settled=` | `test_settled_invoices_retained` | M |
 | FR-CREDIT-030, FR-PRINT-021 | **One print layout** for cash and credit; label `ESTIMATE` for both | **OC** | OD-21, [OD-24](OWNER-DECISIONS.md#od-24) | `sales` print payload · **M12** | `InvoicePrintLayout` · **M20** | — | `print_payload` | `test_cash_and_credit_layout_identical`, `test_estimate_label_both_sale_types` | M + **GL (OD-24)** |
-| FR-PRINT-017/018 | Minimum-exact-decimal amounts; **empty rows blank** | **OC** | [OD-23](OWNER-DECISIONS.md#od-23) | — | `InvoicePrintLayout`, `lib/money.ts` · **M20** | — | amount strings | `test_print_amount_formatting`, `test_format_roundtrip_preserves_value`, `test_empty_rows_blank_not_zero` | M |
-| FR-PRINT-019/020 | Invoice number printed; payment block on **credit only** | **OC** *(inclusion)* / **OPEN** *(placement)* | [OD-22](OWNER-DECISIONS.md#od-22) | **M12** | **M20**, placement **M27** | — | `print_payload` | `test_invoice_number_printed`, `test_number_slot_toggle_safe`, `test_payment_block_credit_only` | M + **GL (OD-22)** |
+| FR-PRINT-017/018 | Zero decimals for `PRICE`, line `TOTAL`, and `GRAND TOTAL`; reject fractional monetary values; **empty rows blank** | **OC** + documented default | Design Completion Addendum §3 | — | `InvoicePrintLayout`, money validators · **M4/M20** | — | exact money strings | zero-decimal display and rejection tests; `test_empty_rows_blank_not_zero` | M |
+| FR-PRINT-019/020 | No customer-visible number; credit-only `Paid / Balance / Due` block after `GRAND TOTAL` as a design default | OD-3 confirmed; OD-22 design default | Design Completion Addendum §4 | — | **M20/M27** | — | `print_payload` has no number; credit block from backend snapshots | no-number structural check; cash/credit block placement test | M + physical M27 acceptance |
 | FR-OFFLINE-002 | **No offline finalisation — cash or credit**; no offline payment | **OC** | OD-21, ADR-011, F-17 | `sync` · **M14** | **M22** | — | **no sync type exists** | `test_no_finalize_sync_type` (registry scan, AC-OFF-8), `offline-finalize-refused.spec.ts`, `offline-credit-refused.spec.ts` | M + **GL (OD-8)** |
 | FR-BILL-003 | On-screen labels **deliberately differ** from printed labels | **OC** | F-16, Addendum 4 | — | `BillItemsTable` · **M17** | — | — | `test_item_table_columns_exact` | M |
 
@@ -49,14 +52,14 @@ Legend — **Class**: `OC` owner-confirmed · `DD` documented default · `TR` te
 | Req | Requirement | Class | Decision | Milestone | Tests | What is blocked |
 |---|---|---|---|---|---|---|
 | FR-SALE-004 | Invoice numbers allocated from a locked series row **inside** the transaction; **unique + sequential** | **OC** *(mechanism)* | ADR-009, **`P2-D-02`** accepted | **M9** | `test_numbering_unique_sequential_under_20_parallel`, `test_rollback_consumes_no_number`, `test_fy_rollover_creates_series_lazily` | Nothing — **buildable now** |
-| NFR-DATA-005 | Numbers **unique and sequential** per (branch, series, FY). **Gaplessness is explicitly NOT asserted** | **DD** *(correctly classified since closure)* | [OD-3](OWNER-DECISIONS.md#od-3) **OPEN** · audit **CF-1** ✅ corrected · `OD-3-A` | **M9** | `property/test_numbering.py` (unique + sequential) | Nothing — the policy statement is now correctly conditional |
+| NFR-DATA-005 | Internal sale reference is unique and sequential per (branch, series, FY); no customer-visible number or current gaplessness requirement | **OC** | OD-3 resolved for product scope; OD-25 legal contingency | **M9** | `property/test_numbering.py` (unique + sequential) | Implementation and tests only |
 | AC-1 | Five-line cash sale with a **unique, sequential** number | **OC** | — | **M10** | `test_finalize_cash_sale`, `happy-path-cash.spec.ts` | Nothing |
-| **AC-1a** | *Conditional:* committed numbers contain **no gaps** | **OPEN** | [OD-3](OWNER-DECISIONS.md#od-3) | **M9** | `test_no_gaps_in_committed_numbers` — **informational, not a release gate** | **This criterion only** |
+| **AC-1a** | Withdrawn for current scope: no customer-visible invoice number requested | **Retired** | OD-3 re-answered; legal serial contingency under OD-25 | — | No gaplessness acceptance test for current scope | Reopens only on qualified legal advice + owner change |
 | — | Financial-year series creation | **TR** | **`P2-D-09`** accepted · [Blueprint §8.2](PHASE-2-IMPLEMENTATION-BLUEPRINT.md) | **M9** + **T3-02** | 8 tests incl. `test_fy_rollover_concurrent_first_sales`, `test_fy_boundary_timezone` | Nothing — **fully designed**; risk **R-15** mitigated |
 | FR-SALE-003 | Server authoritative for all money; client total is a cross-check | **OC** | [OD-7](OWNER-DECISIONS.md#od-7) principles, ADR-032 | **M4/M10** | `test_total_mismatch_rejected`, `test_never_displays_own_total_as_final` | Nothing |
 | NFR-DATA-002 | `total` = `subtotal − discount + tax + rounding_adjustment` | **OC** | — (**DB `CHECK`**) | **M10** | `invariants/test_invoice_totals.py`, `property/test_money_conservation.py` | Nothing |
 | **NFR-DATA-002b** | `subtotal` = Σ `invoice_items.line_total` | **DD** | audit **CF-9** ✅ promoted into `PRD.md §7.4` | **M10** | `invariants/test_invoice_totals.py::subtotal_equals_line_sum` | Nothing — now defined and traced |
-| — | Rounding precision, method, stage, whole-rupee | **OPEN** | [OD-7](OWNER-DECISIONS.md#od-7) · **`P2-D-03`** accepted · [Blueprint §7.1–7.5](PHASE-2-IMPLEMENTATION-BLUEPRINT.md) | **M4** + **T3-03** | Property tests across **all** policy combinations | **Freezing the policy values and the expected-value assertions** — not the module |
+| — | Versioned whole-INR/no-rounding v1 policy default | **Design default complete** | Design Completion Addendum §3; changes require recorded owner/accountant decision before M4 exit | **M4/M10** | Exact precision, rejection and reconciliation tests | Implementation and tests only |
 | NFR-DATA-009 | All money `NUMERIC`/`Decimal`/string, never float | **OC** | ADR-013 | **M2/M4** | `invariants/test_no_float_columns.py`, structural grep for `float(` | Nothing |
 
 ---
@@ -87,7 +90,7 @@ Legend — **Class**: `OC` owner-confirmed · `DD` documented default · `TR` te
 | Decision | Status | Changes | Milestone | Verified by |
 |---|---|---|---|---|
 | [`P2-D-01`](PHASE-2-DECISION-REGISTER.md#p2-d-01) | accepted | Artifact location + a pointer index in `bmfrontend` | — | Link validation; ADR-021 compliance |
-| [`P2-D-02`](PHASE-2-DECISION-REGISTER.md#p2-d-02) | **proposed** · needs `OD-3-A` | Re-scopes OD-3's blocking level; T-03 rewording | M9 | Numbering suite green while OD-3 is open |
+| [`P2-D-02`](PHASE-2-DECISION-REGISTER.md#p2-d-02) | **accepted** · current scope resolved | Internal-only reference; no visible serial | M9 | Internal numbering and recovery tests; no gaplessness criterion |
 | [`P2-D-03`](PHASE-2-DECISION-REGISTER.md#p2-d-03) | **proposed** · values remain OD-7 | `MoneyPolicy` object; bootstrap publishes it | M4, M17 | Property tests pass for **every** policy combination; no hardcoded rounding constant |
 | [`P2-D-04`](PHASE-2-DECISION-REGISTER.md#p2-d-04) | **proposed** | States the source-of-truth hierarchy | — | Blueprint §1; linked from both `CLAUDE.md` |
 | [`P2-D-05`](PHASE-2-DECISION-REGISTER.md#p2-d-05) | accepted | Import linter is a merge blocker | **M1** | A deliberate reverse import **fails CI** |
@@ -135,7 +138,7 @@ All eleven are **RESOLVED** as of Phase 2 closure; full dispositions with valida
 | [OD-8](OWNER-DECISIONS.md#od-8) | Offline expectation | — | Staff training | M28 |
 | [OD-19](OWNER-DECISIONS.md#od-19) | Hosting + **named** alert recipient | — | Monitoring | M26/M28 |
 | [OD-24](OWNER-DECISIONS.md#od-24) | Printed-document terminology | — | Document label approval | M28 |
-| `OD-3-A` **new** | Acknowledge gap-free-as-default | **M9's start** | — | M9 |
+| `OD-25` | Qualified determination on statutory serial-number requirements | Go-live | Owner/accountant | M28 |
 | `OD-19-A` **new** | On-call expectation | — | Operations runbook completeness | M26 |
 
 ---

@@ -1,5 +1,8 @@
 # Phase 2 — Risk Register
 
+> **Current Phase 2 design disposition (2026-10-30):** [Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) is the current cross-cutting decision record. It resolves superseded open labels and defines the Phase 3 implementation baseline. Historical closure reports/addenda remain unchanged; legal, physical and operational gates remain gates. It does not represent implementation or test completion.
+
+
 | Field | Value |
 |---|---|
 | Status | **Living Phase 2 record.** Reviewed at each milestone exit |
@@ -481,9 +484,21 @@ Full control-by-control analysis is in
 | **Recovery** | Resolve [OD-23](OWNER-DECISIONS.md#od-23)'s conflict — whole-rupee entry, print the paise, or print rounded **with the rounding visible** |
 | **Test coverage** | `test_print_amount_formatting`, `test_format_roundtrip_preserves_value`, plus a new case for the fractional path |
 | **Residual** | **Medium until the owner chooses.** The system will refuse to misstate a bill silently, which may mean refusing to print until the amount is whole |
-| **Depends on** | **[OD-23](OWNER-DECISIONS.md#od-23)** fractional conflict — `BLOCKS-GO-LIVE` |
+| **Depends on** | Design default in the 2026-10-30 addendum §3; implementation enforces integer-INR validation with no rounding |
 
 ---
+
+## 7.1 Current dispositions — 2026-10-30
+
+| Risk | Current design status | Remaining gate |
+|---|---|---|
+| R-07 | Money policy fully specified as a versioned whole-INR/no-rounding default | Owner/accountant change must be recorded before M4 exit |
+| R-14 | No current customer-visible numbering or gapless requirement | Reopens only if qualified advice under OD-25 requires visible serials |
+| R-36 | Mitigation and contingency documented; legal status unknown | Qualified legal/accounting determination before go-live |
+| R-37 | Fractional values rejected before finalization and by print validation | Phase 3 M4/M20 implementation and acceptance tests |
+| R-19, R-24, R-25, R-27, R-33, R-34, R-35 | Design controls specified | Training/alerts/device encryption/restore/physical print/tax/catalog gates as applicable |
+
+The remaining risks retain the mitigations and acceptance evidence in their existing entries. A documented design mitigation is not evidence of an implemented control.
 
 ## 7. Summary
 
@@ -529,10 +544,10 @@ blueprint**, does the **plan** include the work, and do **acceptance criteria** 
 | R-27 unrestorable backup | ✅ | §14 | M26 | **AC-10** restore drill | **Mitigated — go-live gate** |
 | R-29 half-migrated fleet | ✅ | §12 | M1, M2 | `/readyz` head-mismatch test | **Mitigated** |
 | R-31 rebuilding rejected credit UI | ✅ **closed in this pass** | — | M19 unblocked | `test_no_credit_details_route` | **Closed** |
-| R-33 inventing the unseen bill bottom | ⚠️ **bounded, not removable** | §10 | **M27 blocked** | Print sign-off | **Accepted — blocked on [OD-5](OWNER-DECISIONS.md#od-5)/[OD-22](OWNER-DECISIONS.md#od-22)** |
+| R-33 inventing the unseen bill bottom | Mitigated by workbook evidence and explicit design | Addendum §4 | **M27 design-ready** | Physical print sign-off | Owner acceptance remains Phase 3 gate |
 | R-34 go-live on unconfirmed tax | ✅ software; ⚠️ business | §11 | M28 | **AC-11** | **Accepted — go-live gates OD-1/2/24** |
 
-### Still open after closure — and what each needs
+### Historical open-risk snapshot at closure — current deltas are in §7.1
 
 | Risk | Severity | What it needs | Who | Blocks |
 |---|---|---|---|---|
@@ -541,7 +556,7 @@ blueprint**, does the **plan** include the work, and do **acceptance criteria** 
 | **R-33** unseen bill bottom | HIGH | **[OD-5](OWNER-DECISIONS.md#od-5)** evidence, then **[OD-22](OWNER-DECISIONS.md#od-22)** placement on a reviewed sample | Owner | **M27 + go-live** |
 | **R-34** unconfirmed tax position | HIGH | **OD-1**, **OD-2**, **OD-24** | Owner + accountant | **Go-live only** |
 | **R-07** rounding policy values | HIGH *(mechanism mitigated)* | **[OD-7](OWNER-DECISIONS.md#od-7)** selects precision, method, stage, whole-rupee | Accountant | **M4's policy freeze only** |
-| **R-14** gapless policy statement | HIGH *(misclassification closed)* | **[OD-3](OWNER-DECISIONS.md#od-3)** answer; `OD-3-A` acknowledgement meanwhile | Accountant / owner | **AC-1a only** |
+| **R-14** gapless customer-visible series | Retired for current scope | No customer-visible numbering; contingency only if OD-25 requires it | Qualified accountant + owner | Go-live contingency only |
 | **R-16** per-counter series creating permanent gaps | MEDIUM | Nothing to build — a **standing prohibition** until OD-3 is answered | — | — |
 | **R-23** insider within permissions | MEDIUM | **Irreducible.** The control is attribution + owner review, not prevention | Owner (process) | — |
 | **R-25** unencrypted IndexedDB | MEDIUM | Full-disk encryption on counter machines | Owner (go-live checklist) | **Go-live only** |

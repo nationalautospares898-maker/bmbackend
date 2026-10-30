@@ -1,5 +1,9 @@
 # Owner Decision Register
 
+> ## Current disposition — 2026-10-30
+>
+> The [Phase 2 Design Completion Addendum](PHASE-2-DESIGN-COMPLETION-ADDENDUM-2026-10-30.md) supersedes stale open/blocking labels for OD-3, OD-5, OD-7, OD-14, OD-21, OD-22, OD-23 and OD-26. It defines the design default and evidence boundary without claiming new owner or accountant approval. Genuine legal, owner-supplied, physical and operational gates are listed in [current required decisions](PHASE-2-OWNER-DECISIONS-REQUIRED.md). Historical text below is retained as decision history; use the addendum for current Phase 3 scope.
+
 | Field | Value |
 |---|---|
 | Status | **Updated 2026-10-30 — the owner's workbook was supplied and inspected ([Addendum 2](PHASE-2-CLOSURE-ADDENDUM-2.md)).** **OD-5 is now RESOLVED on evidence**, and **OD-26** (date order) was raised by that inspection. Previously updated by the owner's fourth answer set.** Settled by owner decision: OD-14 (**re-answered — four actions**), OD-21, OD-23 (**amended**), **OD-3 (re-answered — no customer-visible numbering)**, **OD-5 (layout VERIFIED from the workbook)**. Partially settled: OD-7, OD-22, OD-24. New: **OD-25** (statutory numbering requirement), **OD-26** (printed date order). The rest open. **No item has received legal, tax or accounting approval.** |
