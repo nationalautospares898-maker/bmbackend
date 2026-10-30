@@ -1,0 +1,41 @@
+; Module boundaries from docs/ARCHITECTURE.md §3.
+;
+; This configuration is a merge blocker (P2-D-05). It exists from the first commit,
+; before there is code to untangle. A deliberate reverse import must fail CI.
+;
+; One rule is NOT expressed here: "a domain module may call another domain module only
+; through its service.py, never its repository or ORM models". Import-linter has no
+; "except the module's own package" semantics, so a wildcard contract for it would also
+; forbid a module importing its own repository, which is required. That rule is enforced
+; precisely by tests/structural/test_module_boundaries.py instead.
+
+[importlinter]
+root_package = bm
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = api -> domain -> infra (no reverse imports)
+type = layers
+layers =
+    bm.api
+    bm.domain
+    bm.infra
+exhaustive = false
+
+[importlinter:contract:infra-never-imports-upwards]
+name = infra must not import domain or api
+type = forbidden
+source_modules =
+    bm.infra
+forbidden_modules =
+    bm.domain
+    bm.api
+
+[importlinter:contract:api-never-reaches-past-domain]
+name = api must not touch repositories or ORM models directly
+type = forbidden
+source_modules =
+    bm.api
+forbidden_modules =
+    bm.infra.db.models
+    bm.infra.db.repositories

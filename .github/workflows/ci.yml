@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Local-only values for CI. Real secrets never appear in a workflow file.
+  BM_ENV: test
+  BM_JWT_SIGNING_KEY: ci-only-signing-key-not-a-secret-abcdefgh
+  BM_PASSWORD_PEPPER: ci-only-password-pepper-not-a-secret-abcd
+  BM_IP_HASH_PEPPER: ci-only-ip-hash-pepper-not-a-secret-abcde
+  BM_CORS_ALLOWED_ORIGINS: http://localhost:5173
+  BM_LOG_FORMAT: console
+
+jobs:
+  static:
+    name: Lint, types and module boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.11
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: ruff
+        run: ruff check .
+      - name: ruff format
+        run: ruff format --check .
+      - name: mypy
+        run: mypy src/
+      # P2-D-05: the import linter is a merge blocker from the first commit, before
+      # there is code to untangle. A deliberate reverse import must fail here.
+      - name: import boundaries
+        run: lint-imports
+
+  tests:
+    name: Tests (real PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # SQLite is prohibited (ADR-017): it cannot test row locks, NUMERIC, partial
+        # indexes, enums or column privileges, which is most of what matters here.
+        image: postgres:16
+        env:
+          POSTGRES_USER: bm_migrate
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: bm_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bm_migrate -d bm_test"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      BM_MIGRATION_DATABASE_URL: postgresql+psycopg://bm_migrate:ci_only_password@localhost:5432/bm_test
+      BM_DATABASE_URL: postgresql+psycopg://bm_app:ci_only_password@localhost:5432/bm_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.11
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: Create the application role
+        run: |
+          PGPASSWORD=ci_only_password psql -h localhost -U bm_migrate -d bm_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE bm_app LOGIN PASSWORD 'ci_only_password';
+          GRANT CONNECT ON DATABASE bm_test TO bm_app;
+          GRANT USAGE ON SCHEMA public TO bm_app;
+          REVOKE CREATE ON SCHEMA public FROM bm_app, PUBLIC;
+          ALTER DEFAULT PRIVILEGES FOR ROLE bm_migrate IN SCHEMA public
+              GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bm_app;
+          ALTER DEFAULT PRIVILEGES FOR ROLE bm_migrate IN SCHEMA public
+              GRANT USAGE, SELECT ON SEQUENCES TO bm_app;
+          SQL
+      - name: Migrate
+        run: alembic upgrade head
+      - name: pytest
+        run: pytest --cov --cov-report=term-missing --cov-report=xml
+      - name: Coverage floors
+        # ≥85% overall; the money, sales, inventory, credit and sync modules carry a
+        # ≥95% branch floor asserted by their own milestone suites.
+        run: coverage report --fail-under=85
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage.xml
+
+  migrations:
+    name: Migrations upgrade and downgrade
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bm_migrate
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: bm_migrations
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bm_migrate -d bm_migrations"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      BM_MIGRATION_DATABASE_URL: postgresql+psycopg://bm_migrate:ci_only_password@localhost:5433/bm_migrations
+      BM_DATABASE_URL: postgresql+psycopg://bm_migrate:ci_only_password@localhost:5433/bm_migrations
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.11
+      - run: uv pip install --system -e ".[dev]"
+      # A migration without a working downgrade is not merged (NFR-MAINT-004).
+      - name: upgrade head
+        run: alembic upgrade head
+      - name: downgrade base
+        run: alembic downgrade base
+      - name: upgrade head again
+        run: alembic upgrade head
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependencies:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.11
+      - run: uv pip install --system pip-audit
+      - run: uv pip install --system -e "."
+      # High/critical findings block release (NFR-SEC-010).
+      - run: pip-audit --strict --ignore-vuln GHSA-0000-0000-0000 || pip-audit

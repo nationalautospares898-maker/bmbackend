@@ -1,0 +1,118 @@
+[project]
+name = "bm"
+version = "0.1.0"
+description = "National Auto Spares — billing and inventory backend"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "fastapi>=0.115,<0.120",
+    "uvicorn[standard]>=0.32,<0.40",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+    "sqlalchemy>=2.0.36,<2.1",
+    "alembic>=1.14,<2",
+    "psycopg[binary]>=3.2,<4",
+    "argon2-cffi>=23.1,<26",
+    "pyjwt>=2.9,<3",
+    "python-multipart>=0.0.18,<0.1",
+    "openpyxl>=3.1,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-cov>=6.0,<8",
+    "hypothesis>=6.112,<7",
+    "httpx>=0.27,<0.29",
+    "ruff>=0.8,<0.16",
+    "mypy>=1.13,<2",
+    "import-linter>=2.1,<3",
+    "types-python-dateutil>=2.9,<3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bm"]
+
+# --- ruff ---------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "BLE",      # blind except — a swallowed error in a financial path is unacceptable
+    "C4",       # comprehensions
+    "SIM",      # simplify
+    "RUF",      # ruff
+    "ASYNC",    # async misuse
+]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "B008",   # FastAPI Depends() in defaults is the documented idiom
+    "RUF012", # ClassVar annotations not required for SQLAlchemy/pydantic config dicts
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+"migrations/**" = ["I001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bm"]
+
+# --- mypy ---------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src/bm"]
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+strict_equality = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+# The domain layer holds the money and stock rules; it is strict without exception.
+[[tool.mypy.overrides]]
+module = "bm.domain.*"
+disallow_any_generics = true
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+module = ["argon2.*", "jwt.*", "openpyxl.*"]
+ignore_missing_imports = true
+
+# --- pytest -------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers --strict-config"
+markers = [
+    "db: requires a real PostgreSQL database (SQLite is prohibited, ADR-017)",
+    "concurrency: uses real parallel connections",
+    "slow: excluded from the default developer loop",
+]
+filterwarnings = ["error::DeprecationWarning:bm.*"]
+
+[tool.coverage.run]
+source = ["src/bm"]
+branch = true
+omit = ["src/bm/worker.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
+    "\\.\\.\\.",
+]

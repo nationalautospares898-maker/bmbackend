@@ -1,0 +1,9 @@
+# Normalise line endings so a Windows counter machine and a Linux CI runner agree.
+# Without this, every file shows as modified after a checkout on the other platform.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.xlsx binary
+*.pdf binary
