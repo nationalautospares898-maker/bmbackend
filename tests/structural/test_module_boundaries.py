@@ -13,6 +13,7 @@ let it import someone else's.
 from __future__ import annotations
 
 import ast
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -123,16 +124,47 @@ def test_no_float_conversion_in_the_domain_layer() -> None:
     )
 
 
-def test_no_raw_sql_string_building() -> None:
-    """T-8 / `SECURITY.md §4.1`. An f-string inside `text()` is the shape SQL injection
-    takes; bound parameters are the only permitted form.
+def _module_level_string_constants(tree: ast.Module) -> set[str]:
+    """Names bound at module level to a plain string literal.
 
-    Identifiers interpolated into DDL in a migration are a different case and migrations
+    Only top-level assignments count, and only from a `Constant` str — not from a
+    concatenation, a call, a conditional or a name. Anything that could carry a runtime
+    value is deliberately excluded.
+    """
+    constants: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not (isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                constants.add(target.id)
+    return constants
+
+
+def test_no_raw_sql_string_building() -> None:
+    """T-8 / `SECURITY.md §4.1`. Interpolating a **runtime value** into `text()` is the
+    shape SQL injection takes; bound parameters are the only permitted form.
+
+    Interpolating a module-level string *literal* is a different thing, and the check
+    distinguishes the two rather than banning both. `repositories/catalog.py` composes
+    one search query from `_RANK_SQL` and `_MATCH_KIND_SQL` — two literals assembled at
+    import time, holding the ranking tiers in a readable form instead of as one
+    sixty-line string. No value can reach them, so no input can.
+
+    The distinction is narrow on purpose: the interpolated name must be bound at module
+    level, in the same file, directly to a string literal. A concatenation, a call, a
+    parameter or anything conditional still fails, because any of those can carry a
+    value.
+
+    Identifiers interpolated into DDL in a migration are a separate case and migrations
     are not scanned here — they take no user input.
     """
     violations: list[str] = []
     for path in _python_files(SRC):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        safe_names = _module_level_string_constants(tree)
         for node in ast.walk(tree):
             if not (
                 isinstance(node, ast.Call)
@@ -144,10 +176,67 @@ def test_no_raw_sql_string_building() -> None:
                 continue
             argument = node.args[0]
             if isinstance(argument, ast.JoinedStr):
-                violations.append(f"{_module_name(path)}:{node.lineno} — f-string in text()")
+                interpolated = [
+                    part.value for part in argument.values if isinstance(part, ast.FormattedValue)
+                ]
+                unsafe = [
+                    ast.unparse(value)
+                    for value in interpolated
+                    if not (isinstance(value, ast.Name) and value.id in safe_names)
+                ]
+                if unsafe:
+                    violations.append(
+                        f"{_module_name(path)}:{node.lineno} — f-string in text() "
+                        f"interpolates {unsafe}"
+                    )
             elif isinstance(argument, ast.BinOp) and isinstance(argument.op, ast.Mod):
                 violations.append(f"{_module_name(path)}:{node.lineno} — %-format in text()")
     assert violations == [], "\n".join(violations)
+
+
+def test_the_sql_interpolation_check_still_rejects_a_runtime_value() -> None:
+    """The exemption above is narrow, and this proves it.
+
+    A check that has been loosened is worth nothing unless the loosening is itself
+    tested — otherwise the next person widens it by one more step and the rule quietly
+    stops meaning anything.
+    """
+    unsafe_source = textwrap.dedent(
+        """
+        COLUMN = "name"
+
+        def search(user_input: str) -> None:
+            text(f"SELECT {COLUMN} FROM products WHERE name = '{user_input}'")
+            text(f"SELECT * FROM {table_from_request}")
+            text(f"SELECT {COLUMN} FROM products")
+        """
+    )
+    tree = ast.parse(unsafe_source)
+    safe_names = _module_level_string_constants(tree)
+    assert safe_names == {"COLUMN"}
+
+    flagged: list[str] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "text"
+            and node.args
+            and isinstance(node.args[0], ast.JoinedStr)
+        ):
+            continue
+        unsafe = [
+            ast.unparse(part.value)
+            for part in node.args[0].values
+            if isinstance(part, ast.FormattedValue)
+            and not (isinstance(part.value, ast.Name) and part.value.id in safe_names)
+        ]
+        if unsafe:
+            flagged.append(", ".join(unsafe))
+
+    # The first two interpolate a runtime value; the third interpolates only the
+    # literal constant and is the single permitted form.
+    assert flagged == ["user_input", "table_from_request"]
 
 
 @pytest.mark.parametrize(

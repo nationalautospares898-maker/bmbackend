@@ -325,7 +325,9 @@ class AuthService:
             branch_id=active_branch_id,
             device_id=device.id,
             ip_hash=ip_digest,
-            after={"token_id": token_id, "role": membership.role_code},
+            # A correlation id for the issued session, not the token itself — the
+            # token is never logged or audited (FR-AUDIT-004).
+            after={"session_reference": token_id, "role": membership.role_code},
         )
 
         return LoginResult(

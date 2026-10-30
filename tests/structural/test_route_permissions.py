@@ -11,6 +11,9 @@ build time.
 
 from __future__ import annotations
 
+import inspect
+from typing import Any
+
 import pytest
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
@@ -137,16 +140,67 @@ def test_no_endpoint_sets_payment_status_or_amount_paid(app: FastAPI) -> None:
 
     The schema is scanned rather than the route paths, because the risk is a request
     *field* appearing, not a route named after it.
+
+    Request schemas are found by following every operation's `requestBody`, not by
+    guessing from the name: Pydantic emits a `…Out-Input` variant for any **response**
+    model carrying a serialiser, and a name-based check flagged those — reporting an
+    `amount_paid` that is only ever read.
     """
     schema = app.openapi()
+    components: dict[str, Any] = schema.get("components", {}).get("schemas", {})
+
+    def referenced(node: Any, seen: set[str]) -> set[str]:
+        """Every schema name reachable from a node, following `$ref` transitively."""
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+                name = ref.rsplit("/", 1)[-1]
+                if name not in seen:
+                    seen.add(name)
+                    referenced(components.get(name, {}), seen)
+            for value in node.values():
+                referenced(value, seen)
+        elif isinstance(node, list):
+            for value in node:
+                referenced(value, seen)
+        return seen
+
+    request_schemas: set[str] = set()
+    for operations in (schema.get("paths") or {}).values():
+        for operation in operations.values():
+            if not isinstance(operation, dict):
+                continue
+            body = operation.get("requestBody")
+            if body:
+                referenced(body, request_schemas)
+
     offenders: list[str] = []
-    for name, component in (schema.get("components", {}).get("schemas", {})).items():
-        if not name.endswith(("Request", "Input")):
-            continue
-        for field in component.get("properties") or {}:
+    for name in sorted(request_schemas):
+        for field in components.get(name, {}).get("properties") or {}:
             if field in {"payment_status", "amount_paid", "is_paid", "paid"}:
                 offenders.append(f"{name}.{field}")
     assert offenders == [], f"Derived payment fields must never be settable: {offenders}"
+
+
+def test_the_settable_field_scan_actually_covers_the_request_bodies(app: FastAPI) -> None:
+    """The test above is only meaningful if it finds the request schemas at all.
+
+    A `$ref`-following scan that silently matched nothing would pass forever. This
+    asserts it reaches the finalisation body — the one request where a settable
+    `amount_paid` would do the most damage.
+    """
+    schema = app.openapi()
+    components: dict[str, Any] = schema.get("components", {}).get("schemas", {})
+    found: set[str] = set()
+    for operations in (schema.get("paths") or {}).values():
+        for operation in operations.values():
+            if isinstance(operation, dict) and operation.get("requestBody"):
+                for ref in str(operation["requestBody"]).split("'"):
+                    if ref.startswith("#/components/schemas/"):
+                        found.add(ref.rsplit("/", 1)[-1])
+    assert "FinalizeRequest" in found
+    assert "PaymentRequest" in found
+    assert "FinalizeRequest" in components
 
 
 def test_no_second_finalisation_path(app: FastAPI) -> None:
@@ -162,3 +216,30 @@ def test_no_second_finalisation_path(app: FastAPI) -> None:
         )
     ]
     assert offenders == [], f"There is exactly one finalisation path: {offenders}"
+
+
+def test_authorisation_is_decided_before_the_request_is_validated(app: FastAPI) -> None:
+    """A caller without permission must see a refusal, not a validation error.
+
+    FastAPI solves dependencies in **parameter order**, so a route that declared
+    `idempotency_key: IdempotencyKey` before its permission-guarded `ctx` answered
+    `422 VALIDATION_ERROR` to a caller who should have seen `403 PERMISSION_DENIED` —
+    the permission check was never reached.
+
+    That is not cosmetic. It tells an unauthorised caller about the request schema, and
+    it means `test_every_permissioned_route_refuses_a_role_without_it` can be satisfied
+    by a route that does not actually refuse. Parameter order is invisible on review,
+    so it is asserted here instead.
+    """
+    offenders: list[str] = []
+    for route in _api_routes(app):
+        parameters = list(inspect.signature(route.endpoint).parameters)
+        if "idempotency_key" not in parameters:
+            continue
+        if "ctx" not in parameters:
+            offenders.append(f"{sorted(route.methods or ())} {route.path} has no ctx")
+        elif parameters.index("ctx") > parameters.index("idempotency_key"):
+            offenders.append(f"{sorted(route.methods or ())} {route.path}")
+    assert offenders == [], (
+        f"The permission dependency must precede the idempotency-key header check: {offenders}"
+    )

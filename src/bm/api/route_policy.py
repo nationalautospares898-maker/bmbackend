@@ -29,4 +29,9 @@ AUTHENTICATED_ONLY_ROUTES: dict[str, str] = {
     "/api/v1/auth/select-branch": "narrowed to the caller's own memberships",
     "/api/v1/auth/change-password": "the caller's own password",
     "/api/v1/sync/bootstrap": "the caller's own client configuration",
+    # Publishes which operation types may be queued offline, and that financial
+    # operations are refused (ADR-011). It is a statement about the protocol, not about
+    # the business's data, and the client needs it to explain the refusal rather than
+    # invent a reason.
+    "/api/v1/sync/operation-types": "the offline protocol's own rules",
 }

@@ -57,6 +57,17 @@ MONEY_FRAGMENTS = (
     "delta",
 )
 
+#: Columns whose name matches a money fragment but which hold no amount, with the
+#: reason. Listed individually so a genuinely mistyped money column cannot hide behind a
+#: broad type exclusion: adding an entry here is a deliberate act, and a new
+#: `*_amount double precision` still fails.
+NON_MONEY_COLUMNS: dict[str, str] = {
+    "draft_bill_items.price_source": "an enum: catalog or manual_override",
+    "invoice_items.price_source": "an enum: catalog or manual_override",
+    "invoices.price_changes_accepted": "a boolean: the cashier saw the new prices",
+    "tax_config_versions.prices_include_tax": "a boolean: inclusive or exclusive pricing",
+}
+
 FLOAT_TYPES = {"double precision", "real", "float", "money"}
 
 
@@ -94,9 +105,31 @@ def test_money_shaped_columns_are_numeric(app_session: Session) -> None:
         f"{table}.{column} is {data_type}"
         for table, column, data_type, _ in _columns(app_session)
         if any(fragment in column for fragment in MONEY_FRAGMENTS)
+        and f"{table}.{column}" not in NON_MONEY_COLUMNS
         and data_type not in {"numeric", "integer", "smallint", "bigint", "jsonb", "text"}
     ]
     assert offenders == [], "Money/quantity columns must be NUMERIC. Found: " + ", ".join(offenders)
+
+
+def test_every_non_money_exemption_still_exists_and_still_is_not_money(
+    app_session: Session,
+) -> None:
+    """The exemption list must not outlive what it exempts.
+
+    A stale entry would silently exempt a *new* column that reused the name — which is
+    exactly the case the list is meant to catch — so each one is checked both ways: the
+    column exists, and it is still not a numeric amount.
+    """
+    actual = {
+        f"{table}.{column}": data_type for table, column, data_type, _ in _columns(app_session)
+    }
+    stale = [name for name in NON_MONEY_COLUMNS if name not in actual]
+    assert stale == [], f"Exemptions for columns that no longer exist: {stale}"
+
+    now_numeric = [name for name in NON_MONEY_COLUMNS if actual[name] == "numeric"]
+    assert now_numeric == [], (
+        f"These columns are now NUMERIC and no longer need an exemption: {now_numeric}"
+    )
 
 
 def test_business_scoped_tables_have_a_not_null_business_id(app_session: Session) -> None:

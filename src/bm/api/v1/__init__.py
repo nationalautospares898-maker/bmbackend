@@ -22,4 +22,14 @@ _ROUTER_MODULES: tuple[str, ...] = (
     "auth",  # M3
     "admin",  # M3 — users and devices
     "settings",  # M4 — business rules the owner can change without a deploy
+    "catalog",  # M5 — products, aliases, search
+    "inventory",  # M6 — balances, ledger, adjustments, reconciliation
+    "customers",  # M7
+    "drafts",  # M8
+    "sales",  # M10 — the single finalisation endpoint, cash and credit
+    "credit",  # M11 — payments, allocations, credit views
+    "invoices",  # M12 — read, print payload, cancellation
+    "reports",  # M13
+    "sync",  # M14 — bounded offline scope; no financial operation type
+    "purchases",  # M15 + M24 — suppliers, purchases, returns
 )
