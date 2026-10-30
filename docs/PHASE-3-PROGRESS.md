@@ -77,11 +77,11 @@ stronger word than its evidence supports.
 
 | Milestone | Status | Note |
 |---|---|---|
-| **M23** Imports (P1) | **Not completed** | The `import_jobs` / `import_rows` schema exists (migrations `0015`, `0017`); there is no parser, no review table and no apply path. P1, and no P0 billing flow depends on it. |
+| **M23** Imports (P1) | **Implemented & verified** | `domain/imports/{parser,matcher,service}.py`, `api/v1/imports.py`, `infra/storage/objects.py`, migration `0019`. Upload (type **and** content sniffed), a worker parse through the real queue, per-row matching, human review, and an apply that is one transaction. **A price list produces zero stock movements** — asserted by counting them; a supplier bill receives stock **only** through `PurchaseService.confirm`, so there is still exactly one writer. |
 | **M24** Returns and credit notes (P1) | **Implemented & verified** | `domain/returns/service.py`, migration `0014`. Credits the **snapshot** price, never the current one; a damaged return becomes scrap rather than resalable stock; the return window and the per-item returnable quantity are both enforced. |
-| **M25** Frontend P1 screens | **Not completed** | Stock, Purchases, Customers, Imports, and the report screens beyond Daily Bills and Credit Bills. The API for each exists and is verified; the screens do not. |
-| **M26** Hardening and operational readiness | **Partially implemented** | Done: the reconciliation report, the audit trail with a secret-scan test, the one error envelope, rate limiting, strict CSP, the permission-before-validation ordering check. **Not done:** load tests, the restore drill, and the named alert recipient (OD-19). |
-| **M27** Print completion and physical validation | **Design-complete, awaiting external acceptance** | The layout, the A5/A4 profiles and the switchable credit block are implemented and tested against the workbook structure. A printed sample on the shop's own printer, both logos (**T3-12**), and signed owner acceptance remain. No implementation can clear this. |
+| **M25** Frontend P1 screens | **Implemented & verified** | Stock, Purchases, Customers, Imports — see the client tracker §2. Each is lazy-loaded and gated in the shell on the permission its own endpoints require. |
+| **M26** Hardening and operational readiness | **Implemented & verified**, with two items that need real infrastructure | Done and executed: the five documented job handlers with a registry guard, the alerting channel with OD-19's gap made **visible** rather than defaulted, the reconciliation alert, the transactional-outbox dispatcher, backup and restore-drill scripts, **the restore drill itself run end to end**, and **load tests against every NFR-PERF budget**. Still external: a load measurement on production-like hardware, and a drill against a production snapshot with PITR. |
+| **M27** Print completion and physical validation | **Design-complete, awaiting external acceptance** | The layout, the A5/A4 profiles, the switchable credit block **and now both of the owner's own workbook marks** (T3-12) are implemented and tested. A printed sample on the shop's own printer and signed owner acceptance remain. No implementation can clear this. |
 | **M28** Go-live | **Blocked** | Named external gates in §5. Not a coding task. |
 
 ## 3. Phase 3 task register (T3-01 ... T3-12)
@@ -99,7 +99,7 @@ stronger word than its evidence supports.
 | **T3-09** The four primary actions | **Implemented & verified** | `features/billing/BillingCounter.tsx`. The labels, the shortcuts, the behaviour, and a test asserting **no fifth** finalisation-like action exists. |
 | **T3-10** Printed bill reconciled to the workbook | **Implemented & verified** as a layout; **M27 gate** for the physical sample | The five workbook columns, the 25-row capacity, blank fillers, the owner's footer line, the grand total as the last and heaviest row. |
 | **T3-11** Printed date order | **Implemented & verified** | `print.date_format` is a single configurable source, default `MM-DD-YYYY` from workbook cell E7. The renderer reads it from the payload and is tested for all three orders with a day that cannot be confused with a month. |
-| **T3-12** Embed the two workbook logos | **Not completed** | Requires the image assets from the owner's workbook. The workbook is **not** modified and **not** committed (gitignored in both repos). Belongs with the M27 physical sample. |
+| **T3-12** Embed the two workbook logos | **Implemented & verified** | The assets were in the workbook all along: `ANAS_1234_20260606_231456.xlsx` carries `xl/media/image1.jpeg` and `image2.jpeg`, anchored by `xl/drawings/drawing1.xml` at row 34 in columns 0 and 4 — the two ends of the bill's footer — with `xdr:ext` of 252615x264566 and 267485x297154 EMU, which at 36 000 EMU/mm is 7.02x7.35mm and 7.43x8.25mm. Extracted byte-for-byte to `bmfrontend/src/assets/`, placed at exactly that geometry, and pinned by a test. **Nothing was drawn, substituted or approximated.** The workbook itself is not modified and not committed. The printed sample is still M27. |
 
 ## 4. Decisions taken during implementation
 
@@ -153,22 +153,75 @@ was not executed.
 ### Backend
 
 ```
-alembic downgrade base && alembic upgrade head   -> clean, head 0017 (17 migrations)
-pytest                                            -> 361 passed
+alembic downgrade base && alembic upgrade head   -> clean, head 0020 (20 migrations)
+pytest                                            -> 517 passed, 8 deselected (the slow load suite)
+pytest tests/load -m slow                         -> 7 passed (see the table below)
 ruff check .                                       -> All checks passed
-ruff format --check .                              -> 142 files already formatted
-mypy                                               -> Success: no issues found in 100 source files
+ruff format --check .                              -> 168 files already formatted
+mypy src                                           -> Success: no issues found in 113 source files
 lint-imports                                       -> Contracts: 3 kept, 0 broken
 ```
 
-Suites that make up those 361:
+Suites that make up those 517:
 
-| Suite | Count | What it proves |
-|---|---|---|
-| `tests/integration/test_billing_workflows.py` | 71 | End-to-end against real PostgreSQL 16: stock deducted **exactly once**, idempotent replay with `Idempotent-Replay: true`, `IDEMPOTENCY_KEY_REUSE` on a changed payload, a rolled-back attempt leaving the key reusable, credit requiring a persisted customer, payments moving no stock, `amount_paid` equal to the allocation sum after a reversal, no invoice number in the print payload, cancellation reversing stock exactly once while retaining the reference, returns crediting the snapshot price, damaged returns becoming scrap, daily-sales and credit-outstanding reconciling, CSV injection escaped, the sync registry refusing a financial operation, the audit trail complete and secret-free |
-| `tests/concurrency/test_parallel_billing.py` | 8 | **Real threads, real connections, `threading.Barrier`.** 20 parallel finalisations on one series -> 20 invoices, no gaps, no duplicates; a failed sale consumes no reference; two counters racing for the last unit -> one sale and one `INSUFFICIENT_STOCK`; ten sales against stock of three; concurrent same-key submits -> exactly one invoice; a **50-parallel multi-product deadlock probe** -> zero deadlocks; `balance = sum(movements)` under contention; concurrent payments cannot over-allocate |
-| `tests/api/test_response_contract.py` | 17 | Every published response shape validated against a **real** response with `extra="forbid"`; `cost_price` **absent** (not null) without permission; `totals.tax` null; no invoice number |
-| `tests/invariants/`, `tests/structural/`, `tests/property/`, `tests/migrations/`, `tests/api/`, `tests/unit/` | 265 | No float column anywhere; every money column `NUMERIC`; every business-scoped table `business_id NOT NULL`; database enums matching the code exactly; the append-only grant; `api -> domain -> infra` with no reverse imports; no money arithmetic in `api/`; no `float()` in `domain/`; no runtime value interpolated into `text()`; every route declaring a permission; authorisation decided **before** request validation; no settable `payment_status`/`amount_paid` in any request body; no second finalisation path; the shared normalisation fixture list |
+| Suite | What it proves |
+|---|---|
+| `tests/integration/test_billing_workflows.py` | End-to-end against real PostgreSQL 16: stock deducted **exactly once**, idempotent replay with `Idempotent-Replay: true`, `IDEMPOTENCY_KEY_REUSE` on a changed payload, a rolled-back attempt leaving the key reusable, credit requiring a persisted customer, payments moving no stock, `amount_paid` equal to the allocation sum after a reversal, no invoice number in the print payload, cancellation reversing stock exactly once while retaining the reference, returns crediting the snapshot price, damaged returns becoming scrap, daily-sales and credit-outstanding reconciling, CSV injection escaped, the sync registry refusing a financial operation, the audit trail complete and secret-free |
+| `tests/concurrency/test_parallel_billing.py` | **Real threads, real connections, `threading.Barrier`.** 20 parallel finalisations on one series -> 20 invoices, no gaps, no duplicates; a failed sale consumes no reference; two counters racing for the last unit -> one sale and one `INSUFFICIENT_STOCK`; ten sales against stock of three; concurrent same-key submits -> exactly one invoice; a **50-parallel multi-product deadlock probe** -> zero deadlocks; `balance = sum(movements)` under contention; concurrent payments cannot over-allocate |
+| `tests/api/test_imports.py` (**M23**, 42) | The whole import workflow against the real API and the real queue: an executable renamed `.csv` refused on its **content**; a traversal filename kept as metadata while the stored key is generated; the same bytes twice returning the **existing** job; an override requiring a reason and being **audited**; parse reaching `parsed` or `needs_review` correctly; a second delivery of the parse job a **no-op**; part codes matching across spellings; the second occurrence in a file a `duplicate_in_file`; an unreadable row **kept** as `invalid` with its raw cells; apply refused with a count while a row is pending; **a price list changing prices and moving zero stock**; a supplier bill receiving through a confirmed purchase; `applied` terminal even with a fresh key; re-applying moving no further stock; **a failing row rolling the whole import back**, with the earlier row's price change gone too; the report naming the skipped rows and why; another business getting `404` rather than `403` |
+| `tests/unit/test_import_parser.py` (33) | A header below a letterhead; one recognised column **not** enough to be a header; `1,250.50`, `₹2400`, `330.00/-`, `(50)` all read correctly; `about 300` an **error, not a guess**; a blank price column **not** becoming a price of zero; a bad row **kept with a reason, never dropped**; semicolon exports and a UTF-8 BOM; only the first spreadsheet sheet read, with the rest **reported**; PDF text extracted across `Td` line breaks and every PDF row flagged low-confidence (FR-IMP-010) |
+| `tests/unit/test_upload_storage.py` (21) | The three accepted types and nothing else; a `.csv` validated by **decodability**; an `.xlsx` that must really be a zip; an executable renamed either way refused; a generated key carrying **nothing** of the user's filename; two keys in the same instant differing; a traversal or absolute key refused by the **operation**, not by trusting the caller |
+| `tests/unit/test_alerting.py` (16) | OD-19 made honest: off by default; enabled-with-no-destination reporting `unconfigured` and **refusing to claim delivery**; a destination with no **named** person its own state; the destination hint carrying scheme and host but **never the path**, because for every common provider the path is the credential; a non-HTTP scheme refused; plain HTTP refused in production; real delivery against a loopback server; an unreachable endpoint **never raising into the caller** |
+| `tests/integration/test_jobs.py` (15) | The jobs nobody watches: reconciliation **reporting a drifted balance and not repairing it**; the alert body carrying no product, quantity or customer; a clean run raising **nothing**; the dispatcher leaving an undelivered event `pending` rather than marking it dispatched; `failed` as a visible dead letter after the attempt limit; another consumer's event left alone; an abandoned draft marked `stale`, **never finalised**; marking stale twice changing nothing; pruning respecting the retention window |
+| `tests/unit/test_job_kinds.py` (5) | Every `JobKind` has a registered handler, and no handler is registered under a string that is not a `JobKind` — so a scheduled job that could never run fails the build instead of dead-lettering in production |
+| `tests/invariants/test_restored_data.py` (13) | Data invariants that must hold of **any** consistent NAS database, and the proof step of the restore drill: `balance = sum(movements)` and no orphaned movement; `amount_paid` equal to the allocations; an overpaid invoice **labelled** overpaid; `payment_status` agreeing with the amounts; `max(sequence)+1 = next_number` with no duplicates; every invoice having items; `total = subtotal - discount + tax + rounding`; `subtotal = sum(line_total)`; no credit sale without a customer; no row pointing at a missing business; the restored schema at the expected head |
+| `tests/api/test_response_contract.py` (17) | Every published response shape validated against a **real** response with `extra="forbid"`; `cost_price` **absent** (not null) without permission; `totals.tax` null; no invoice number |
+| `tests/invariants/`, `tests/structural/`, `tests/property/`, `tests/migrations/`, `tests/api/`, `tests/unit/` (rest) | No float column anywhere; every money column `NUMERIC`; every business-scoped table `business_id NOT NULL`; database enums matching the code exactly; the append-only grant; `api -> domain -> infra` with no reverse imports; no money arithmetic in `api/`; no `float()` in `domain/`; no runtime value interpolated into `text()`; every route declaring a permission; authorisation decided **before** request validation; no settable `payment_status`/`amount_paid` in any request body; no second finalisation path; the shared normalisation fixture list |
+
+### Load tests — measured against the PRD's own budgets
+
+`PRD.md §7.1` states these targets. The earlier report claimed none existed; it was
+wrong, which is why this suite exists. Run against a **real 100 000-product catalogue**
+seeded by `scripts/seed_demo.py`, through the real service layer and the real locks.
+
+| Budget | Target | Measured (p95) | Result |
+|---|---|---|---|
+| NFR-PERF-001 product search | 150 ms | **141.6 ms** (p50 101.9) | **PASS** |
+| NFR-PERF-002 sale finalisation, 10 lines | 600 ms p95 / 1500 ms p99 | **266.9 ms** p95, 271.2 ms p99 | **PASS** |
+| NFR-PERF-003 draft save | 250 ms | **46.7 ms** | **PASS** |
+| NFR-PERF-004 daily sales, one day | 1000 ms | **16.6 ms** | **PASS** |
+| NFR-PERF-004 daily sales, one month | 3000 ms | **5.7 ms** | **PASS** |
+| NFR-PERF-005 5 counters x 20 drafts | 250 ms | **35.8 ms** | **PASS** |
+| NFR-PERF-006 no unbounded query | hard max page size | clamped, asserted | **PASS** |
+
+**NFR-PERF-001's 50-concurrent figure is a staging measurement, not this one.** A single
+search costs about 100 ms of CPU; fifty arriving at once on any machine with finite cores
+must queue, which is Little's Law and not a defect. What this suite asserts instead is the
+property that *is* a code property: throughput under 50-way concurrency measured
+**6.2-7.3x** the single-threaded figure, so the work parallelises rather than serialising.
+A flat figure there would have meant a lock, and that is the defect the test exists to
+catch. The absolute p95 at that concurrency needs production-like hardware.
+
+### The restore drill — executed, not described
+
+`DEPLOYMENT.md §7.1` lists seven steps. All seven ran against an isolated PostgreSQL 16
+in the project's own container, on a dataset whose 40 invoices were created by the **real
+finalisation engine** (a bulk `INSERT` of invoices would satisfy the schema and fail the
+data invariants, which would make the drill meaningless):
+
+```
+[1] scratch database bm_drill created (template0, UTF8, LC_COLLATE=C)
+[2] pg_dump --format=custom -> 711 071 bytes, 54 tables with data; pg_restore --exit-on-error -> OK
+[3] alembic current on the restored database -> 0019 (head)
+[4] pytest tests/invariants/test_restored_data.py -> 13 passed   <- the actual proof
+[5] spot-checks: 40 invoices / 400 items / 3 400 movements / 3 000 products / 40 payments;
+    balance - ledger difference 0.000 on every sampled product; next_number 41 == max(sequence)+1
+[7] scratch database dropped; dump removed
+```
+
+`scripts/backup.sh` and `scripts/restore_drill.sh` are the repeatable form. A drill against
+a **production** snapshot with point-in-time recovery, and therefore the real RTO figure,
+remains external (NFR-REL-002/003, OD-19).
 
 ### Frontend
 
@@ -176,9 +229,9 @@ Suites that make up those 361:
 tsc -b (3 projects)                   -> clean
 eslint .                               -> clean
 prettier --check src tests configs    -> All matched files use Prettier code style
-vitest run                             -> 224 passed (10 files)
-playwright test                        -> 6 passed (chromium, against the built app)
-vite build                             -> built in ~2s; initial chunk 410.95 kB raw / 130.88 kB gzip
+vitest run                             -> 300 passed (14 files)
+playwright test                        -> 12 passed (chromium, against the built app)
+vite build                             -> built; initial chunk 427.54 kB raw / 139.21 kB gzip
 vitest run --coverage                  -> src/lib/money.ts 100% / src/lib/normalize.ts 100%
 ```
 
@@ -188,41 +241,50 @@ vitest run --coverage                  -> src/lib/money.ts 100% / src/lib/normal
 | `src/features/billing/finalize.test.ts` | 19 | Offline creates **nothing** -- no key, no pending row, no request -- for credit as well as cash; the key is on disk **during** the request; an unknown outcome keeps it; a definitive refusal releases it; `retryUnconfirmed` never mints a key |
 | `src/db/persistence.test.ts` | 23 | Against real IndexedDB: a draft survives a reopen; the limit refuses rather than discarding; an unconfirmed bill cannot be cleared; one intent one key, and a reordered line list is the same intent; the outbox coalesces, blocks a conflicted entity's later operations, and never drops a rejection |
 | `src/features/sync/scheduler.test.ts` | 17 | No financial operation can be queued; `accepted`/`replayed` adopt the server's version; `conflicted` marks the draft and keeps the operation; `rejected` is surfaced; a network failure requeues; the catalog cache has nowhere to put a cost price and clears on `reset_required`; the scheduler marks finalisations stale rather than resending them |
-| `src/features/print/InvoicePrintLayout.test.tsx` | 22 | No invoice number or substitute; no tax row when `tax` is null; 25 rows with **blank** fillers; no placeholder for an unsupplied business detail; the credit block only for a credit bill; `ESTIMATE` for both; all three date orders; a fractional amount **throws** rather than rounding |
+| `src/features/print/InvoicePrintLayout.test.tsx` | 24 | No invoice number or substitute; no tax row when `tax` is null; 25 rows with **blank** fillers; no placeholder for an unsupplied business detail; the credit block only for a credit bill; `ESTIMATE` for both; all three date orders; a fractional amount **throws** rather than rounding; **both workbook marks present, one at each end of the footer, and marked decorative** (T3-12) |
 | `src/api/errors.test.ts` | 28 | All **53** codes present and described actionably with no status code or jargon; business conflicts inline; nothing already-done retryable |
 | `src/features/billing/BillingCounter.test.tsx` | 17 | Exactly four actions and **no fifth**; both finalisations disabled offline; the total labelled a preview; the limit message saying nothing will be closed; **axe: zero violations** (wcag2a + wcag2aa); every input labelled |
+| `src/features/stock/StockScreen.test.tsx` (**M25**) | 20 | **No way to set a quantity** (FR-INV-002); the sign taken from the chosen reason so the two cannot disagree; an empty reason refused; an adjustment that would go below zero refused; the resulting balance shown before committing; a missing reorder level **not** rendered as zero and **not** called low; the same normalisation as the counter search; movement reasons in a shopkeeper's words; **axe: zero violations** |
+| `src/features/purchases/PurchasesScreen.test.tsx` (**M25**) | 16 | The FR-PUR-003 separation visible in the status text, the button wording and the confirmation; `movements: 0` reported as **already received**, never as a second receipt; the first unmet requirement named rather than a silently disabled button; the cost pre-filled from the catalogue, visibly and editably; a client-generated supplier id; **axe: zero violations** |
+| `src/features/customers/CustomersScreen.test.tsx` (**M25**) | 18 | **No editable balance and no "mark as paid"** (ADR-022), and the screen says the figure is derived; the server's figure rendered rather than recomputed; a suspected duplicate **warning without blocking** (FR-CUST-004); a half-typed phone not looked up; a client-generated id on create and the existing id on edit; **empty payment terms sent as `null`, never zero days**; a reversal shown as its own row; **axe: zero violations** |
+| `src/features/imports/ImportsScreen.test.tsx` (**M25**) | 19 | Apply **disabled while any row is pending, with the count stated** (FR-IMP-007); the intent chosen and its effect on stock said before a file is picked; a duplicate file asking for a reason and only then offering the override; "add as a new item" **never** offered for an unreadable row; the matcher's reason shown verbatim; a bulk decision per status; different confirmation text per intent; the report naming what was left out; **axe: zero violations** |
 | `src/lib/normalize.test.ts` | 18 | The **shared fixture list**, matching `bmbackend/tests/unit/test_normalize.py` |
 | `tests/e2e/offline-and-keyboard.spec.ts` | 6 | Against the **built** app in Chromium with a genuine `setOffline(true)`: both finalisations refused offline, a bill typed offline surviving a reload, `Save a Draft` queueing offline, a whole bill completed **keyboard-only**, a shortfall rendered inline with per-line detail and no retry affordance, and the printed bill in `#print-root` carrying no invoice number |
-| `src/lib/money.test.ts`, `tests/structural/rules.test.ts` | 56 | The money engine at 100%; the structural rules |
+| `tests/e2e/back-office-screens.spec.ts` (**M25**) | 6 | The M25 screens in the **built** bundle, across the real lazy-chunk boundary: stock showing "Running low" in words, purchases showing "Entered, not received", customers stating the balance cannot be typed in, imports blocking apply with the pending count — and **a cashier seeing none of the back-office tabs**, because a tab that leads to a `403` is worse than no tab |
+| `src/lib/money.test.ts`, `tests/structural/rules.test.ts` | 56 | The money engine at 100%; the structural rules, now including one that reads the **backend's** `permissions.py` and fails if the client gates on a permission that does not exist |
 
 ### Not run -- and therefore not claimed
 
 | What | Why |
 |---|---|
-| Load tests | No staging environment and no agreed throughput target. NFR budgets are stated in Phase 2 but have not been measured under load. |
-| Backup restore drill | Requires a real backup target and a restore window (M26, OD-19). |
-| Print validation on the shop's printer | **M27, an external gate.** The layout is implemented and tested; a physical sample on real paper with both logos and signed owner acceptance is a separate authorisation. |
+| Load measurement on production-like hardware | The budgets are now **measured and met** on a developer machine against a real 100 000-product catalogue, and the implementation is shown to parallelise rather than serialise. The absolute p95 under 50-way concurrency depends on cores, not on code, so it needs staging. |
+| A restore drill against a production snapshot with PITR | The drill **ran end to end** against an isolated PostgreSQL on a dataset built by the real engine, and the scripts are committed. A production snapshot, the PITR path and therefore the real RTO figure need the managed platform (NFR-REL-002/003, OD-19). |
+| A named alert recipient | **OD-19 is unresolved.** The channel is implemented and tested; it refuses to invent an address, and reports `unconfigured` in `/readyz` and in `GET /api/v1/notifications/alerting` so the gap is visible rather than silent. |
+| Print validation on the shop's printer | **M27, an external gate.** The layout and both of the owner's own marks are implemented and tested; a physical sample on real paper with signed owner acceptance is a separate authorisation. |
 | Multi-tab owner-election (FE-E-2) under real contention | The Web Lock path is implemented and the single-tab path is tested; two real browser contexts racing for the lock is not. |
 | Any browser other than Chromium | Deliberate: the counter machines run Chrome or Edge, and print fidelity is only verified there. |
+| PDF import beyond machine-generated text | FR-IMP-010 classes PDF extraction as best-effort and P2. Text streams are extracted and **every** PDF row is forced through human review; a scanned image is detected and refused with an actionable message. No OCR. |
 
 ## 7. Exact next action
 
-Phase 3's P0 scope -- a working, verified bill -- is complete on both sides. What remains
-is P1 scope and the external gates.
+**Every executable Phase 3 implementation requirement is complete and verified.** What
+remains is not software.
 
-**In implementation order:**
+| # | Item | Who |
+|---|---|---|
+| 1 | **OD-4** — the business identity to print: legal name, display name, address lines, phone numbers. Nothing is defaulted or invented anywhere; the print payload omits what it is not given, and the layout renders no placeholder. | Owner |
+| 2 | **OD-6 / M27** — a printed sample on the shop's own printer and paper, checked against the workbook, and signed acceptance. Both marks are now in place (T3-12). | Owner |
+| 3 | **OD-19** — the hosting decision and a **named** person who receives a production alert. Until then `/readyz` reports `alerting: unconfigured`, which is the honest state. | Owner |
+| 4 | **OD-22** — where the credit-block appears on a cash bill, if at all. | Owner |
+| 5 | **OD-24** — the document label. `ESTIMATE` is in force for cash and credit alike until this changes. | Owner |
+| 6 | **OD-25 / R-36** — tax legality and numbering. `tax.mode` stays `estimate_only`; **no legal or accounting conclusion is drawn anywhere in this codebase.** | Owner + accountant |
+| 7 | **OD-26** — the printed date order. `print.date_format` is one configurable source, currently `MM-DD-YYYY` from workbook cell E7. | Owner |
+| 8 | **OD-8** — staff training, specifically that a bill cannot be completed offline and that a counter slip is not a bill. | Owner |
+| 9 | **M26 external half** — a staging load measurement and a production restore drill. | Deployment |
+| 10 | **M28** — the go-live checklist, which is gated on all of the above. | Owner |
 
-1. **M23 imports** (backend parser + apply path, then the review table in the client).
-   The schema exists; nothing else does. No P0 flow depends on it.
-2. **M25 frontend P1 screens** -- Stock, Purchases, Customers, Imports, and the reports
-   beyond Daily and Credit Bills. Every API they need is implemented and verified.
-3. **M26 completion** -- load tests against a staging environment, the restore drill, and
-   the named alert recipient (OD-19). All three need something outside this repository.
-4. **M27** is not an implementation task. It needs a printer, paper, the two workbook
-   logos (**T3-12**) and a signature.
-
-**Before any of that reaches a counter**, §5's gates still stand. In particular nothing
-in this codebase makes, or may be read as making, a legal or tax conclusion (OD-25/R-36).
+**Implementation authorisation was never deployment or go-live authorisation.** Nothing
+in this phase was deployed, and no production system was touched.
 
 ## 8. Related documents
 

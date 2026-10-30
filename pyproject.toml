@@ -100,7 +100,11 @@ ignore_missing_imports = true
 # --- pytest -------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers --strict-config"
+# `-m "not slow"` makes the marker's own description true. The load suite needs a
+# deliberately seeded 100 000-product catalogue (`scripts/seed_demo.py`) and takes
+# minutes; run it on purpose with `pytest tests/load -m slow`. Without this the default
+# loop collected it and silently skipped — which looks the same as passing.
+addopts = "-q --strict-markers --strict-config -m 'not slow'"
 markers = [
     "db: requires a real PostgreSQL database (SQLite is prohibited, ADR-017)",
     "concurrency: uses real parallel connections",

@@ -18,6 +18,11 @@ from pydantic import Field
 
 from bm.api.deps import CurrentContext, IdempotencyKey, ReadSession, WriteSession, require
 from bm.api.v1.schemas.common import QuantityStr, StrictModel
+from bm.api.v1.schemas.responses import (
+    AdjustmentOut,
+    StockBalancesOut,
+    StockMovementsOut,
+)
 from bm.domain.auth.permissions import Permission
 from bm.domain.inventory.service import InventoryService
 
@@ -36,7 +41,7 @@ class AdjustmentRequest(StrictModel):
     reason_text: str = Field(min_length=3, max_length=500)
 
 
-@router.get("/balances")
+@router.get("/balances", responses={200: {"model": StockBalancesOut}})
 def list_balances(
     session: ReadSession,
     ctx: Annotated[CurrentContext, Depends(require(Permission.CATALOG_READ))],
@@ -58,7 +63,7 @@ def list_balances(
     }
 
 
-@router.get("/movements")
+@router.get("/movements", responses={200: {"model": StockMovementsOut}})
 def list_movements(
     session: ReadSession,
     ctx: Annotated[CurrentContext, Depends(require(Permission.CATALOG_READ))],
@@ -87,7 +92,7 @@ def list_movements(
     }
 
 
-@router.post("/adjustments")
+@router.post("/adjustments", responses={200: {"model": AdjustmentOut}})
 def create_adjustment(
     body: AdjustmentRequest,
     session: WriteSession,

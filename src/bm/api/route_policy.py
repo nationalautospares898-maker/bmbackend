@@ -34,4 +34,9 @@ AUTHENTICATED_ONLY_ROUTES: dict[str, str] = {
     # the business's data, and the client needs it to explain the refusal rather than
     # invent a reason.
     "/api/v1/sync/operation-types": "the offline protocol's own rules",
+    # Notices about the business the caller is already signed in to. Gating "stock has
+    # run out" behind a reports permission would mean the person at the counter is the
+    # one person who cannot be told (M26).
+    "/api/v1/notifications": "the caller's own business's notices",
+    "/api/v1/notifications/{notification_id}:read": "marks one of those notices read",
 }

@@ -226,6 +226,14 @@ class ImportJob(Base):
     __tablename__ = "import_jobs"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    #: Monotonic upload order (migration `0020`).
+    #:
+    #: `created_at` cannot carry this: it comes from `now()` at the OS clock's
+    #: resolution, so two uploads under load tie — and `id` is `uuid4`, so a tiebreak on
+    #: it is random. The list promised newest-first and could not keep it, and the
+    #: `before=<created_at>` cursor could skip or repeat a row on the same tie.
+    #: A sequence is monotonic per insert, which is what "newest" actually means.
+    ordinal: Mapped[int] = mapped_column(BigInteger, nullable=False)
     business_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("businesses.id", ondelete="RESTRICT"), nullable=False
     )
@@ -266,7 +274,19 @@ class ImportJob(Base):
 
     __table_args__ = (
         # FR-IMP-004 / E-9: the same bytes twice is a 409, not a second import.
-        UniqueConstraint("business_id", "file_sha256", name="uq_import_jobs__file"),
+        #
+        # **Partial**, on `duplicate_of_job_id IS NULL` (migration `0019`). The same
+        # requirement also says an override "requires an explicit flag and a reason, and
+        # is audited" — so the second row has to be creatable. A total constraint would
+        # reject the very row the requirement describes, which is why the first
+        # implementation ended up doctoring the digest to get around it.
+        Index(
+            "uq_import_jobs__file",
+            "business_id",
+            "file_sha256",
+            unique=True,
+            postgresql_where=text("duplicate_of_job_id IS NULL"),
+        ),
         CheckConstraint(
             "intent <> 'purchase_receipt' OR supplier_id IS NOT NULL",
             name="ck_import_jobs__supplier",

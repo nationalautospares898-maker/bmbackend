@@ -20,6 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 Environment = Literal["local", "test", "staging", "production"]
 StorageBackend = Literal["local", "s3"]
 LogFormat = Literal["json", "console"]
+AlertSeverity = Literal["info", "warning", "critical"]
 
 
 class ConfigError(RuntimeError):
@@ -74,6 +75,26 @@ class Settings(BaseSettings):
 
     # --- worker ---------------------------------------------------------------
     worker_concurrency: int = Field(default=2, ge=1, le=32)
+
+    # --- alerting (OD-19) -----------------------------------------------------
+    #
+    # The **recipient is configuration, never a default**. OD-19 is still open and says
+    # outright that "an alert that reaches nobody is not monitoring", so this code will
+    # not invent an address: with alerting enabled and no recipient, `/readyz` reports
+    # `alerting: unconfigured` rather than silently dropping alerts. Inventing a
+    # plausible-looking address would be worse than leaving it blank, because the gap
+    # would then be invisible.
+    alerting_enabled: bool = False
+    #: Where a critical alert is delivered. An HTTPS webhook URL (Slack, Teams, a pager
+    #: provider) or `mailto:` — the channel is inferred from the scheme so adding one
+    #: does not need a new variable.
+    alert_webhook_url: SecretStr | None = None
+    #: Free-text name of the human who is accountable for alerts. OD-19 requires a
+    #: *named* person, not a shared inbox, so this is recorded and surfaced in `/readyz`
+    #: — the operator can see at a glance whether anyone owns the pager.
+    alert_recipient_name: str | None = None
+    alert_min_severity: AlertSeverity = "warning"
+    alert_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
 
     @field_validator("database_url")
     @classmethod

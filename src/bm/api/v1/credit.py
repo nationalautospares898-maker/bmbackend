@@ -25,7 +25,12 @@ from bm.api.deps import (
     require,
 )
 from bm.api.v1.schemas.common import MoneyStr, StrictModel
-from bm.api.v1.schemas.responses import CreditCustomersOut, PaymentOut, ReversalOut
+from bm.api.v1.schemas.responses import (
+    CreditCustomersOut,
+    PaymentHistoryListOut,
+    PaymentOut,
+    ReversalOut,
+)
 from bm.domain.auth.permissions import Permission
 from bm.domain.credit.service import AllocationTarget, CreditService
 
@@ -110,7 +115,7 @@ def record_payment(
     }
 
 
-@router.get("/payments")
+@router.get("/payments", responses={200: {"model": PaymentHistoryListOut}})
 def list_payments(
     session: ReadSession,
     ctx: Annotated[CurrentContext, Depends(require(Permission.CREDIT_READ))],

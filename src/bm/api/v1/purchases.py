@@ -24,6 +24,13 @@ from bm.api.deps import (
     require_any,
 )
 from bm.api.v1.schemas.common import MoneyStr, QuantityStr, StrictModel
+from bm.api.v1.schemas.responses import (
+    PurchaseConfirmedOut,
+    PurchaseCreatedOut,
+    PurchaseListOut,
+    SupplierListOut,
+    SupplierUpsertOut,
+)
 from bm.domain.auth.permissions import Permission
 from bm.domain.purchases.service import PurchaseLine, PurchaseService
 from bm.domain.returns.service import ReturnLine, ReturnService
@@ -74,7 +81,7 @@ class ReturnCreateRequest(StrictModel):
 # --- suppliers ----------------------------------------------------------------
 
 
-@router.get("/suppliers")
+@router.get("/suppliers", responses={200: {"model": SupplierListOut}})
 def list_suppliers(
     session: ReadSession,
     ctx: Annotated[CurrentContext, Depends(require(Permission.INVENTORY_RECEIVE))],
@@ -87,7 +94,7 @@ def list_suppliers(
     }
 
 
-@router.put("/suppliers/{supplier_id}")
+@router.put("/suppliers/{supplier_id}", responses={200: {"model": SupplierUpsertOut}})
 def upsert_supplier(
     supplier_id: uuid.UUID,
     body: SupplierUpsertRequest,
@@ -109,7 +116,11 @@ def upsert_supplier(
 # --- purchases ----------------------------------------------------------------
 
 
-@router.post("/purchases", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/purchases",
+    status_code=status.HTTP_201_CREATED,
+    responses={201: {"model": PurchaseCreatedOut}},
+)
 def create_purchase(
     body: PurchaseCreateRequest,
     session: WriteSession,
@@ -134,7 +145,7 @@ def create_purchase(
     return {"purchase_id": str(purchase_id), "status": "draft"}
 
 
-@router.post("/purchases/{purchase_id}:confirm")
+@router.post("/purchases/{purchase_id}:confirm", responses={200: {"model": PurchaseConfirmedOut}})
 def confirm_purchase(
     purchase_id: uuid.UUID,
     session: WriteSession,
@@ -159,7 +170,7 @@ def cancel_purchase(
     PurchaseService(session, clock).cancel(ctx, purchase_id)
 
 
-@router.get("/purchases")
+@router.get("/purchases", responses={200: {"model": PurchaseListOut}})
 def list_purchases(
     session: ReadSession,
     clock: ClockDep,

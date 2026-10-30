@@ -332,6 +332,37 @@ class OutboxStatus(StrEnum):
 OUTBOX_STATUS = pg_enum("outbox_status", *(e.value for e in OutboxStatus))
 
 
+class JobKind(StrEnum):
+    """The queue's `kind` values, from `ARCHITECTURE.md §7`.
+
+    `jobs.kind` is a text column rather than a Postgres enum on purpose: adding a job
+    kind is a code deployment, and requiring a migration to deploy a worker would mean
+    the enum and the handler registry could disagree at exactly the wrong moment. This
+    enum is the single source of the strings instead, and
+    `tests/unit/test_job_kinds.py` asserts every member has a registered handler — so a
+    kind nothing can run fails the build rather than dead-lettering in production.
+    """
+
+    IMPORT_PARSE = "import.parse"
+    INVENTORY_RECONCILE = "inventory.reconcile"
+    IDEMPOTENCY_PRUNE = "idempotency.prune"
+    DRAFTS_MARK_STALE = "drafts.mark_stale"
+    NOTIFICATIONS_DISPATCH = "notifications.dispatch"
+    # `ARCHITECTURE.md §7` also lists `import.apply` and `credit.ageing_snapshot`.
+    # Neither is a member here, for different reasons:
+    #
+    # * `import.apply` is a synchronous endpoint instead. `API-SPECIFICATION.md` requires
+    #   an `Idempotency-Key` on `POST /imports/{id}:apply`, and FR-IMP-008 requires the
+    #   whole apply to be one transaction — both of which describe a request the caller
+    #   waits on. Enqueueing it would mean the user confirms an import and is told
+    #   nothing about whether it worked.
+    # * `credit.ageing_snapshot` is idempotent on a `(business, date)` unique key in a
+    #   snapshot table that `DATA-MODEL.md` never specifies columns for. Ageing is
+    #   computed live by `CreditService.ageing_summary`, which is correct but unindexed
+    #   history; the snapshot table is a P2 reporting concern, not an unimplemented part
+    #   of this phase.
+
+
 class NotificationKind(StrEnum):
     LOW_STOCK = "low_stock"
     OVERDUE_CREDIT = "overdue_credit"

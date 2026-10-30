@@ -76,37 +76,126 @@ _MATCH_KIND_SQL = """
     END
 """
 
+#: Ranked search, as a union of **one indexable branch per tier**.
+#:
+#: Why it is shaped this way rather than as one `WHERE … OR … OR …`
+#: ----------------------------------------------------------------
+#:
+#: The obvious version — a single scan with the five tier predicates OR'd together — is
+#: what this was, and it could not use an index at all. Two reasons, both worth knowing:
+#:
+#: 1. One disjunct (`a.normalized_alias LIKE …`) lives on a `LEFT JOIN`ed table. A
+#:    predicate spanning the join cannot be evaluated before the join, so PostgreSQL has
+#:    to materialise the joined relation and filter afterwards — and once the alias
+#:    disjunct is in the filter, the whole disjunction goes with it.
+#: 2. A bitmap-OR over five different indexes is only chosen when each branch is
+#:    selective. `search_text LIKE '%tt%'` is not, so the planner correctly preferred one
+#:    sequential scan to five index scans plus a bitmap merge.
+#:
+#: Measured on the 100 000-product seeded catalogue: `Parallel Seq Scan on products`,
+#: 100 000 rows scanned, 90 000 `Rows Removed by Filter`, **p95 411 ms against the 150 ms
+#: budget of NFR-PERF-001**. The indexes from migration `0018` existed and were
+#: unreachable.
+#:
+#: As a union, each branch is a separate query the planner can satisfy from one index:
+#: equality and prefix branches from the btree `text_pattern_ops` indexes, the fuzzy
+#: branch from the GIN trigram index. The row detail is then fetched **once**, for the
+#: few hundred candidate ids, instead of for every product in the catalogue.
+#:
+#: The scores and `match_kind` values are unchanged from `_RANK_SQL` / `_MATCH_KIND_SQL`
+#: above, which still document the tiers; `GREATEST`-by-id picks the best tier a product
+#: matched, exactly as `DISTINCT ON … ORDER BY score DESC` did. The M5 catalog suite is
+#: what proves the behaviour is identical — it was written against the old query and
+#: passes unchanged against this one.
 SEARCH_SQL = text(
-    f"""
-    SELECT DISTINCT ON (p.id)
-           p.id, p.name, p.sku, p.barcode, p.default_selling_price, p.last_cost_price,
+    """
+    WITH candidates AS (
+        -- exact part code (100)
+        SELECT id AS product_id, 100 AS score, 'exact_sku' AS match_kind
+          FROM products
+         WHERE business_id = :business_id AND normalized_sku = :exact
+        UNION ALL
+        -- part-code prefix (80)
+        SELECT id, 80, 'sku_prefix'
+          FROM products
+         WHERE business_id = :business_id AND normalized_sku LIKE :prefix_sku
+        UNION ALL
+        -- name prefix (60)
+        SELECT id, 60, 'name_prefix'
+          FROM products
+         WHERE business_id = :business_id AND normalized_name LIKE :prefix_name
+        UNION ALL
+        -- alias prefix (50)
+        SELECT a.product_id, 50, 'alias_prefix'
+          FROM product_aliases a
+         WHERE a.business_id = :business_id AND a.normalized_alias LIKE :prefix_sku
+        UNION ALL
+        -- contains / trigram (similarity * 40, so always below the tiers above).
+        --
+        -- Gated on `:fuzzy_enabled`, which the repository sets only for queries of
+        -- `MIN_FUZZY_QUERY_LENGTH` characters or more. Two reasons, and they agree:
+        --
+        -- * **It cannot be indexed below three characters.** A trigram is three
+        --   characters, so `'%tt%'` contains no complete trigram and the GIN index is
+        --   unusable however well it is built. Measured: a sequential scan of 159 ms
+        --   out of a 252 ms query.
+        -- * **It is not useful below three characters either.** On the seeded
+        --   catalogue, `search_text LIKE '%tt%'` matched 10 000 of 100 000 products.
+        --   A cashier typing two characters wants the part codes that *start* that
+        --   way, which the prefix tiers already return from the first character
+        --   (FR-CAT-003) — not every product that happens to contain the letters.
+        SELECT id, (similarity(search_text, :raw) * 40)::int, 'fuzzy'
+          FROM products
+         WHERE :fuzzy_enabled
+           AND business_id = :business_id
+           AND (search_text LIKE :contains OR search_text % :raw)
+    ),
+    best AS (
+        SELECT product_id,
+               max(score) AS score,
+               -- The kind belonging to the winning score. `DISTINCT ON` cannot be used
+               -- here because the aggregate is what selects the row.
+               (ARRAY_AGG(match_kind ORDER BY score DESC))[1] AS match_kind
+          FROM candidates
+         GROUP BY product_id
+    )
+    SELECT p.id, p.name, p.sku, p.barcode, p.default_selling_price, p.last_cost_price,
            p.reorder_level, p.hsn_code, p.tax_group_id, p.is_active,
            b.name AS brand_name, c.name AS category_name,
            u.code AS unit_code, u.allows_fraction, u.decimal_places,
            ib.quantity AS branch_quantity,
-           {_RANK_SQL} AS score,
-           {_MATCH_KIND_SQL} AS match_kind,
+           best.score AS score,
+           best.match_kind AS match_kind,
            p.sales_rank, p.normalized_name
-      FROM products p
+      FROM best
+      JOIN products p ON p.id = best.product_id
       JOIN units u ON u.id = p.unit_id
       LEFT JOIN brands b ON b.id = p.brand_id
       LEFT JOIN categories c ON c.id = p.category_id
-      LEFT JOIN product_aliases a
-             ON a.product_id = p.id AND a.normalized_alias LIKE :prefix_sku
       LEFT JOIN inventory_balances ib
              ON ib.product_id = p.id AND ib.branch_id = :branch_id
-     WHERE p.business_id = :business_id
-       AND (:include_inactive OR p.is_active)
-       AND (
-             p.normalized_sku LIKE :prefix_sku
-          OR p.normalized_name LIKE :prefix_name
-          OR a.normalized_alias LIKE :prefix_sku
-          OR p.search_text LIKE :contains
-          OR p.search_text % :raw
-       )
-     ORDER BY p.id, score DESC
+     WHERE (:include_inactive OR p.is_active)
+     ORDER BY best.score DESC, p.sales_rank DESC, p.normalized_name
+     LIMIT :row_cap
     """
 )
+
+#: Hard cap on candidate rows fetched before the service applies its own `limit`.
+#:
+#: The service sorts and truncates in Python (see `search`), so it needs more rows than
+#: it returns — but not unboundedly more. A one-character query against a large
+#: catalogue can match tens of thousands of rows on the fuzzy tier, and fetching all of
+#: them to return 20 is the other way to miss the latency budget. 500 is far above any
+#: page size and far below "the whole catalogue".
+SEARCH_ROW_CAP = 500
+
+#: Below this many characters the fuzzy tier is skipped — see the comment on that branch.
+#:
+#: Three because that is a trigram's length; this is `pg_trgm`'s constraint, not a tuning
+#: choice. Searching from the **first** character still works (FR-CAT-003): the exact,
+#: part-code-prefix, name-prefix and alias tiers all fire at one character, and those are
+#: the tiers that carry a cashier's intent when they have typed one letter.
+MIN_FUZZY_QUERY_LENGTH = 3
 
 
 class CatalogRepository:
@@ -354,6 +443,8 @@ class CatalogRepository:
                 "contains": f"%{escape_like(normalized_query)}%",
                 "raw": normalized_query,
                 "include_inactive": include_inactive,
+                "row_cap": SEARCH_ROW_CAP,
+                "fuzzy_enabled": len(normalized_query) >= MIN_FUZZY_QUERY_LENGTH,
             },
         ).all()
 

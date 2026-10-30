@@ -528,6 +528,233 @@ class DailySalesOut(ReportOut):
     by_payment_method: list[DailySalesByMethodOut]
 
 
+class PaymentHistoryOut(Out):
+    """One row of `GET /payments`.
+
+    Declared for M25: the customer screen shows a payment history, and an undeclared
+    response left the client stringifying `unknown` values — which ESLint correctly
+    refused, because `String(someObject)` yields `[object Object]` on a screen showing
+    money.
+    """
+
+    id: uuid.UUID
+    amount: MoneyStr
+    #: `null` when the payment has not been allocated to this invoice — a payment can
+    #: exist before it is applied, and nulling it is not the same as zero.
+    allocated: MoneyStr | None = None
+    method: str
+    reference: str | None = None
+    received_at: datetime
+    #: `payment` or `reversal`. A reversal is a new row; the original is never edited
+    #: (FR-PAY-005), so both appear in this history.
+    kind: str
+    invoice_id: uuid.UUID | None = None
+
+
+class PaymentHistoryListOut(Out):
+    items: list[PaymentHistoryOut]
+
+
+# --- inventory and purchases (declared for M25) -------------------------------
+#
+# These routes predate `responses.py` and returned undocumented dicts, which meant the
+# client's types for them would have had to be hand-written — the exact thing ADR-029
+# exists to prevent. Declaring them here is what lets the Stock and Purchases screens
+# use generated types like every other screen.
+
+
+class StockBalanceOut(Out):
+    product_id: uuid.UUID
+    name: str
+    quantity: QuantityStr
+    #: `null` when the product has no reorder level set — which is not the same as a
+    #: reorder level of zero, so the screen must not render "0" for it.
+    reorder_level: QuantityStr | None = None
+
+
+class StockBalancesOut(Out):
+    items: list[StockBalanceOut]
+    as_of: datetime
+
+
+class StockMovementOut(Out):
+    id: uuid.UUID
+    product_id: uuid.UUID
+    #: Signed. The sign is derived from `reason`, never supplied by a caller.
+    quantity_delta: QuantityStr
+    balance_after: QuantityStr
+    reason: str
+    source_type: str
+    source_id: uuid.UUID
+    oversell_override: bool
+    override_reason: str | None = None
+    created_at: datetime
+
+
+class StockMovementsOut(Out):
+    items: list[StockMovementOut]
+    as_of: datetime
+
+
+class AdjustmentOut(Out):
+    movement_id: uuid.UUID
+
+
+class SupplierOut(Out):
+    id: uuid.UUID
+    name: str
+    phone: str | None = None
+
+
+class SupplierListOut(Out):
+    items: list[SupplierOut]
+
+
+class SupplierUpsertOut(Out):
+    id: uuid.UUID
+
+
+class PurchaseSummaryOut(Out):
+    id: uuid.UUID
+    supplier_id: uuid.UUID
+    supplier_name: str
+    supplier_document_number: str | None = None
+    document_date: date | None = None
+    status: str
+    subtotal: MoneyStr
+    total: MoneyStr
+    line_count: int
+
+
+class PurchaseListOut(Out):
+    items: list[PurchaseSummaryOut]
+
+
+class PurchaseCreatedOut(Out):
+    id: uuid.UUID
+
+
+class PurchaseConfirmedOut(Out):
+    #: How many stock movements the confirmation produced. `0` means it was already
+    #: confirmed — the idempotent case, which the screen reports as "already received"
+    #: rather than as a second receipt.
+    movements: int
+
+
+# --- imports (M23) ------------------------------------------------------------
+
+
+class ImportUploadOut(Out):
+    """`202` from `POST /imports`.
+
+    `duplicate_of_job_id` is present and null on a normal upload rather than omitted:
+    unlike `cost_price`, its absence carries no permission meaning, and a client
+    checking `=== null` is clearer than one checking `in`.
+    """
+
+    job_id: uuid.UUID
+    status: str
+    duplicate_of_job_id: uuid.UUID | None = None
+
+
+class ImportJobOut(Out):
+    id: uuid.UUID
+    #: Monotonic upload order, and the `?before=` cursor for the history list. A
+    #: timestamp cursor over a non-unique column can skip or repeat a row (migration
+    #: `0020`), which is why this is here rather than `created_at`.
+    ordinal: int
+    intent: str
+    status: str
+    original_filename: str
+    file_size_bytes: int
+    supplier_id: uuid.UUID | None = None
+    row_count: int
+    rows_applied: int
+    rows_skipped: int
+    rows_failed: int
+    #: Derived, not stored — how many rows still block an apply (FR-IMP-007). The
+    #: review screen's progress indicator reads this and nothing else.
+    rows_pending_decision: int
+    error_summary: str | None = None
+    created_purchase_id: uuid.UUID | None = None
+    duplicate_of_job_id: uuid.UUID | None = None
+    created_at: datetime
+    applied_at: datetime | None = None
+
+
+class ImportJobsOut(Out):
+    jobs: list[ImportJobOut]
+
+
+class ImportRowOut(Out):
+    id: uuid.UUID
+    row_index: int
+    #: The file's own cells, verbatim, header → value as text. Shown beside the
+    #: interpreted values so a reviewer can see what the software did to their data
+    #: (FR-IMP-006).
+    raw_values: dict[str, str | None]
+    parsed_name: str | None = None
+    parsed_sku: str | None = None
+    parsed_quantity: QuantityStr | None = None
+    parsed_unit_cost: MoneyStr | None = None
+    parsed_selling_price: MoneyStr | None = None
+    match_status: str
+    matched_product_id: uuid.UUID | None = None
+    matched_product_name: str | None = None
+    candidate_product_ids: list[uuid.UUID]
+    match_confidence: MoneyStr | None = None
+    decision: str
+    apply_result: str | None = None
+    #: Doubles as the matcher's reason before an apply and the failure reason after one.
+    #: One field because a reviewer asks the same question at both moments: why is this
+    #: row like this?
+    apply_error: str | None = None
+    needs_decision: bool
+
+
+class ImportRowsOut(Out):
+    rows: list[ImportRowOut]
+
+
+class ImportDecisionOut(Out):
+    row: ImportRowOut
+
+
+class ImportReportRowOut(Out):
+    row_index: int
+    parsed_name: str | None = None
+    parsed_sku: str | None = None
+    match_status: str
+    decision: str
+    apply_result: str | None = None
+    apply_error: str | None = None
+
+
+class ImportReportOut(Out):
+    """FR-IMP-009. Carries the skipped rows and their reasons, not just the counts."""
+
+    job: ImportJobOut
+    rows: list[ImportReportRowOut]
+
+
+# --- operational --------------------------------------------------------------
+
+
+class AlertingStatusOut(Out):
+    """OD-19's gap, made visible.
+
+    `state` is `unconfigured` when alerting is on and no destination is set — an
+    operator reading `/readyz` can see that alerts are being dropped instead of
+    discovering it during an incident.
+    """
+
+    state: str
+    recipient_name: str | None = None
+    #: Scheme and host only. For most webhook providers the path is the credential.
+    destination_hint: str | None = None
+    min_severity: str
+
+
 # --- errors -------------------------------------------------------------------
 
 

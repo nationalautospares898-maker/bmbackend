@@ -232,6 +232,10 @@ BUSINESS_DATA_TABLES = (
     "sync_operations",
     "outbox_events",
     "notifications",
+    # The queue. An import upload enqueues an `import.parse` row in the same
+    # transaction, so a test that uploads leaves one behind; `uq_jobs__dedupe` would
+    # then make the *next* test's enqueue a silent no-op.
+    "jobs",
     "idempotency_keys",
     "login_attempts",
     "refresh_tokens",

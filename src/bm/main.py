@@ -31,6 +31,7 @@ from bm.api.middleware import (
 )
 from bm.config import Settings, get_settings
 from bm.domain.shared.context import AuthContext
+from bm.infra.alerting.channel import AlertChannel
 from bm.infra.db.migration_state import migration_state
 from bm.infra.db.session import (
     database_reachable,
@@ -153,6 +154,19 @@ def _register_operational_routes(app: FastAPI) -> None:
                 ready = state.matches
             else:
                 ready = False
+
+        # OD-19: an alert that reaches nobody is not monitoring. Reported, but it does
+        # **not** make the replica unready — refusing traffic because the pager is
+        # unconfigured would take the shop's billing offline to protest a missing
+        # environment variable. The operator sees `unconfigured` here and in
+        # `GET /api/v1/notifications/alerting`.
+        alerting = AlertChannel(get_settings()).describe()
+        checks["alerting"] = {
+            "state": alerting.state.value,
+            "recipient_name": alerting.recipient_name,
+            "destination": alerting.destination_hint,
+        }
+
         return JSONResponse(
             status_code=200 if ready else 503,
             content={"status": "ready" if ready else "not_ready", "checks": checks},

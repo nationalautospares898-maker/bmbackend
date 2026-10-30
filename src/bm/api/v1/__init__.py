@@ -32,4 +32,6 @@ _ROUTER_MODULES: tuple[str, ...] = (
     "reports",  # M13
     "sync",  # M14 — bounded offline scope; no financial operation type
     "purchases",  # M15 + M24 — suppliers, purchases, returns
+    "imports",  # M23 — upload, parse, review, apply
+    "notifications",  # M26 — in-app notices and the alerting status
 )
