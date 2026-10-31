@@ -44,6 +44,10 @@ class AuditAction(StrEnum):
     REFRESH_FAMILY_REVOKED = "refresh_family.revoked"
     DEVICE_REGISTERED = "device.registered"
     DEVICE_REVOKED = "device.revoked"
+    #: Which counter a registered PC bills as. Audited separately from
+    #: `COUNTER_UPDATED` because it answers a different question: not "what changed
+    #: about this till" but "whose takings does this machine's next sale land in".
+    DEVICE_COUNTER_ASSIGNED = "device.counter_assigned"
     BRANCH_SELECTED = "branch.selected"
     ROLE_CHANGED = "role.changed"
 
@@ -51,6 +55,7 @@ class AuditAction(StrEnum):
     SETTING_CHANGED = "setting.changed"
     TAX_MODE_CHANGED = "tax.mode_changed"
     BUSINESS_UPDATED = "business.updated"
+    COUNTER_UPDATED = "counter.updated"
     INVOICE_SERIES_UPDATED = "invoice_series.updated"
 
     # catalog

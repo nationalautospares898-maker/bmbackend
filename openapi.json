@@ -145,34 +145,7 @@
         "title": "AllocationIn",
         "type": "object"
       },
-      "AllocationOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "amount": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Amount"
-          },
-          "invoice_id": {
-            "format": "uuid",
-            "title": "Invoice Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "invoice_id",
-          "amount"
-        ],
-        "title": "AllocationOut",
-        "type": "object"
-      },
-      "AllocationOut-Output": {
+      "AllocationOut": {
         "additionalProperties": false,
         "properties": {
           "amount": {
@@ -218,6 +191,29 @@
         "title": "AllocationSpec",
         "type": "object"
       },
+      "AssignCounterRequest": {
+        "additionalProperties": false,
+        "description": "`null` detaches the computer from every counter.\n\nA sub-resource carrying one field rather than a general `PUT /admin/devices/{id}`:\nthis is the only device column an administrator may set here, and a wider body would\nlet a counter assignment also rewrite a device's label, branch or revocation state.",
+        "properties": {
+          "counter_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counter Id"
+          }
+        },
+        "required": [
+          "counter_id"
+        ],
+        "title": "AssignCounterRequest",
+        "type": "object"
+      },
       "Body_upload_import_api_v1_imports_post": {
         "properties": {
           "allow_duplicate": {
@@ -237,7 +233,7 @@
             "title": "Duplicate Reason"
           },
           "file": {
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File",
             "type": "string"
           },
@@ -443,76 +439,7 @@
         "title": "BusinessOut",
         "type": "object"
       },
-      "CachedProductOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "barcode": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Barcode"
-          },
-          "default_selling_price": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Default Selling Price"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "is_active": {
-            "title": "Is Active",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "sku": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sku"
-          },
-          "stock": {
-            "$ref": "#/components/schemas/StockOut-Input"
-          },
-          "unit": {
-            "$ref": "#/components/schemas/UnitOut"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "sku",
-          "barcode",
-          "unit",
-          "default_selling_price",
-          "is_active",
-          "stock"
-        ],
-        "title": "CachedProductOut",
-        "type": "object"
-      },
-      "CachedProductOut-Output": {
+      "CachedProductOut": {
         "additionalProperties": false,
         "properties": {
           "barcode": {
@@ -555,7 +482,7 @@
             "title": "Sku"
           },
           "stock": {
-            "$ref": "#/components/schemas/StockOut-Output"
+            "$ref": "#/components/schemas/StockOut"
           },
           "unit": {
             "$ref": "#/components/schemas/UnitOut"
@@ -661,7 +588,7 @@
           },
           "products": {
             "items": {
-              "$ref": "#/components/schemas/CachedProductOut-Output"
+              "$ref": "#/components/schemas/CachedProductOut"
             },
             "title": "Products",
             "type": "array"
@@ -709,100 +636,135 @@
         "title": "ChangePasswordRequest",
         "type": "object"
       },
-      "CreditCustomerOut-Input": {
-        "additionalProperties": false,
-        "description": "Every aggregate is **server-computed**; the client never sums these\n(FR-RPT-030, ADR-032).",
+      "CounterDeviceOut": {
         "properties": {
-          "ageing": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "title": "Ageing",
-            "type": "object"
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
           },
-          "customer": {
-            "$ref": "#/components/schemas/CreditCustomerRefOut"
+          "label": {
+            "title": "Label",
+            "type": "string"
           },
-          "days_overdue": {
+          "last_seen_at": {
             "anyOf": [
               {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "status",
+          "last_seen_at"
+        ],
+        "title": "CounterDeviceOut",
+        "type": "object"
+      },
+      "CounterOut": {
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/CounterDeviceOut"
+            },
+            "title": "Devices",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "max_open_drafts": {
+            "title": "Max Open Drafts",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "branch_id",
+          "max_open_drafts",
+          "is_active",
+          "devices"
+        ],
+        "title": "CounterOut",
+        "type": "object"
+      },
+      "CounterUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "max_open_drafts": {
+            "anyOf": [
+              {
+                "minimum": 20.0,
                 "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Days Overdue"
+            "title": "Max Open Drafts"
           },
-          "invoice_count": {
-            "title": "Invoice Count",
-            "type": "integer"
-          },
-          "oldest_due_date": {
+          "name": {
             "anyOf": [
               {
-                "format": "date",
+                "maxLength": 200,
+                "minLength": 1,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Oldest Due Date"
-          },
-          "open_invoice_count": {
-            "title": "Open Invoice Count",
-            "type": "integer"
-          },
-          "outstanding": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Outstanding"
-          },
-          "total_invoiced": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Total Invoiced"
-          },
-          "total_paid": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Total Paid"
+            "title": "Name"
           }
         },
-        "required": [
-          "customer",
-          "invoice_count",
-          "open_invoice_count",
-          "total_invoiced",
-          "total_paid",
-          "outstanding",
-          "oldest_due_date",
-          "days_overdue",
-          "ageing"
-        ],
-        "title": "CreditCustomerOut",
+        "title": "CounterUpdateRequest",
         "type": "object"
       },
-      "CreditCustomerOut-Output": {
+      "CreditCustomerOut": {
         "additionalProperties": false,
         "description": "Every aggregate is **server-computed**; the client never sums these\n(FR-RPT-030, ADR-032).",
         "properties": {
@@ -916,7 +878,7 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/CreditCustomerOut-Output"
+              "$ref": "#/components/schemas/CreditCustomerOut"
             },
             "title": "Items",
             "type": "array"
@@ -1098,51 +1060,7 @@
         "title": "CustomerUpsertRequest",
         "type": "object"
       },
-      "DailySalesByDayOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "bill_count": {
-            "title": "Bill Count",
-            "type": "integer"
-          },
-          "credit_sales": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Credit Sales"
-          },
-          "date": {
-            "format": "date",
-            "title": "Date",
-            "type": "string"
-          },
-          "net": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Net"
-          }
-        },
-        "required": [
-          "date",
-          "bill_count",
-          "net",
-          "credit_sales"
-        ],
-        "title": "DailySalesByDayOut",
-        "type": "object"
-      },
-      "DailySalesByDayOut-Output": {
+      "DailySalesByDayOut": {
         "additionalProperties": false,
         "properties": {
           "bill_count": {
@@ -1172,33 +1090,7 @@
         "title": "DailySalesByDayOut",
         "type": "object"
       },
-      "DailySalesByMethodOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "collected": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Collected"
-          },
-          "method": {
-            "title": "Method",
-            "type": "string"
-          }
-        },
-        "required": [
-          "method",
-          "collected"
-        ],
-        "title": "DailySalesByMethodOut",
-        "type": "object"
-      },
-      "DailySalesByMethodOut-Output": {
+      "DailySalesByMethodOut": {
         "additionalProperties": false,
         "properties": {
           "collected": {
@@ -1232,14 +1124,14 @@
           },
           "by_day": {
             "items": {
-              "$ref": "#/components/schemas/DailySalesByDayOut-Output"
+              "$ref": "#/components/schemas/DailySalesByDayOut"
             },
             "title": "By Day",
             "type": "array"
           },
           "by_payment_method": {
             "items": {
-              "$ref": "#/components/schemas/DailySalesByMethodOut-Output"
+              "$ref": "#/components/schemas/DailySalesByMethodOut"
             },
             "title": "By Payment Method",
             "type": "array"
@@ -1526,115 +1418,7 @@
         "title": "DraftItemIn",
         "type": "object"
       },
-      "DraftItemOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "catalog_price_at_add": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Catalog Price At Add"
-          },
-          "discount_amount": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Discount Amount"
-          },
-          "discount_percent": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Discount Percent"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "line_no": {
-            "title": "Line No",
-            "type": "integer"
-          },
-          "line_total_preview": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Line Total Preview"
-          },
-          "price_source": {
-            "title": "Price Source",
-            "type": "string"
-          },
-          "product_id": {
-            "format": "uuid",
-            "title": "Product Id",
-            "type": "string"
-          },
-          "product_name": {
-            "title": "Product Name",
-            "type": "string"
-          },
-          "quantity": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Quantity"
-          },
-          "unit_price": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Unit Price"
-          }
-        },
-        "required": [
-          "id",
-          "line_no",
-          "product_id",
-          "product_name",
-          "quantity",
-          "unit_price",
-          "catalog_price_at_add",
-          "price_source",
-          "discount_percent",
-          "discount_amount",
-          "line_total_preview"
-        ],
-        "title": "DraftItemOut",
-        "type": "object"
-      },
-      "DraftItemOut-Output": {
+      "DraftItemOut": {
         "additionalProperties": false,
         "properties": {
           "catalog_price_at_add": {
@@ -1782,7 +1566,7 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/DraftItemOut-Output"
+              "$ref": "#/components/schemas/DraftItemOut"
             },
             "title": "Items",
             "type": "array"
@@ -1825,7 +1609,7 @@
             "title": "Phone"
           },
           "preview_totals": {
-            "$ref": "#/components/schemas/DraftPreviewTotalsOut-Output"
+            "$ref": "#/components/schemas/DraftPreviewTotalsOut"
           },
           "status": {
             "title": "Status",
@@ -1881,34 +1665,7 @@
         "title": "DraftOut",
         "type": "object"
       },
-      "DraftPreviewTotalsOut-Input": {
-        "additionalProperties": false,
-        "description": "Always advisory. The server recomputes everything at finalisation\n(FR-DRAFT-011).",
-        "properties": {
-          "advisory": {
-            "title": "Advisory",
-            "type": "boolean"
-          },
-          "total": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Total"
-          }
-        },
-        "required": [
-          "advisory",
-          "total"
-        ],
-        "title": "DraftPreviewTotalsOut",
-        "type": "object"
-      },
-      "DraftPreviewTotalsOut-Output": {
+      "DraftPreviewTotalsOut": {
         "additionalProperties": false,
         "description": "Always advisory. The server recomputes everything at finalisation\n(FR-DRAFT-011).",
         "properties": {
@@ -2256,7 +2013,7 @@
         "additionalProperties": false,
         "properties": {
           "row": {
-            "$ref": "#/components/schemas/ImportRowOut-Output"
+            "$ref": "#/components/schemas/ImportRowOut"
           }
         },
         "required": [
@@ -2502,189 +2259,7 @@
         "title": "ImportReportRowOut",
         "type": "object"
       },
-      "ImportRowOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "apply_error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Apply Error"
-          },
-          "apply_result": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Apply Result"
-          },
-          "candidate_product_ids": {
-            "items": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "title": "Candidate Product Ids",
-            "type": "array"
-          },
-          "decision": {
-            "title": "Decision",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "match_confidence": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Match Confidence"
-          },
-          "match_status": {
-            "title": "Match Status",
-            "type": "string"
-          },
-          "matched_product_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Matched Product Id"
-          },
-          "matched_product_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Matched Product Name"
-          },
-          "needs_decision": {
-            "title": "Needs Decision",
-            "type": "boolean"
-          },
-          "parsed_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parsed Name"
-          },
-          "parsed_quantity": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parsed Quantity"
-          },
-          "parsed_selling_price": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parsed Selling Price"
-          },
-          "parsed_sku": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parsed Sku"
-          },
-          "parsed_unit_cost": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parsed Unit Cost"
-          },
-          "raw_values": {
-            "additionalProperties": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "title": "Raw Values",
-            "type": "object"
-          },
-          "row_index": {
-            "title": "Row Index",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "row_index",
-          "raw_values",
-          "match_status",
-          "candidate_product_ids",
-          "decision",
-          "needs_decision"
-        ],
-        "title": "ImportRowOut",
-        "type": "object"
-      },
-      "ImportRowOut-Output": {
+      "ImportRowOut": {
         "additionalProperties": false,
         "properties": {
           "apply_error": {
@@ -2859,7 +2434,7 @@
         "properties": {
           "rows": {
             "items": {
-              "$ref": "#/components/schemas/ImportRowOut-Output"
+              "$ref": "#/components/schemas/ImportRowOut"
             },
             "title": "Rows",
             "type": "array"
@@ -3021,141 +2596,7 @@
         "title": "InvoiceDiscountIn",
         "type": "object"
       },
-      "InvoiceItemOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "discount_amount": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Discount Amount"
-          },
-          "line_no": {
-            "title": "Line No",
-            "type": "integer"
-          },
-          "line_total": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Line Total"
-          },
-          "product_name_snapshot": {
-            "title": "Product Name Snapshot",
-            "type": "string"
-          },
-          "quantity": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Quantity"
-          },
-          "returned_quantity": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Returned Quantity"
-          },
-          "sku_snapshot": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sku Snapshot"
-          },
-          "tax_amount": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Tax Amount"
-          },
-          "tax_rate_snapshot": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Tax Rate Snapshot"
-          },
-          "unit_code_snapshot": {
-            "title": "Unit Code Snapshot",
-            "type": "string"
-          },
-          "unit_cost_snapshot": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Unit Cost Snapshot"
-          },
-          "unit_price": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Unit Price"
-          }
-        },
-        "required": [
-          "line_no",
-          "product_name_snapshot",
-          "sku_snapshot",
-          "unit_code_snapshot",
-          "quantity",
-          "unit_price",
-          "discount_amount",
-          "tax_rate_snapshot",
-          "tax_amount",
-          "line_total",
-          "returned_quantity"
-        ],
-        "title": "InvoiceItemOut",
-        "type": "object"
-      },
-      "InvoiceItemOut-Output": {
+      "InvoiceItemOut": {
         "additionalProperties": false,
         "properties": {
           "discount_amount": {
@@ -3247,7 +2688,7 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/InvoiceSummaryOut-Output"
+              "$ref": "#/components/schemas/InvoiceSummaryOut"
             },
             "title": "Items",
             "type": "array"
@@ -3338,7 +2779,7 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/InvoiceItemOut-Output"
+              "$ref": "#/components/schemas/InvoiceItemOut"
             },
             "title": "Items",
             "type": "array"
@@ -3423,127 +2864,7 @@
         "title": "InvoiceOut",
         "type": "object"
       },
-      "InvoiceSummaryOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "amount_paid": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Amount Paid"
-          },
-          "counter": {
-            "title": "Counter",
-            "type": "string"
-          },
-          "customer_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Customer Id"
-          },
-          "customer_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Customer Name"
-          },
-          "due_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Due Date"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "internal_reference": {
-            "title": "Internal Reference",
-            "type": "string"
-          },
-          "is_credit": {
-            "title": "Is Credit",
-            "type": "boolean"
-          },
-          "issued_at": {
-            "format": "date-time",
-            "title": "Issued At",
-            "type": "string"
-          },
-          "outstanding": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Outstanding"
-          },
-          "payment_status": {
-            "title": "Payment Status",
-            "type": "string"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "total": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Total"
-          }
-        },
-        "required": [
-          "id",
-          "internal_reference",
-          "issued_at",
-          "status",
-          "is_credit",
-          "due_date",
-          "customer_id",
-          "customer_name",
-          "counter",
-          "total",
-          "amount_paid",
-          "outstanding",
-          "payment_status"
-        ],
-        "title": "InvoiceSummaryOut",
-        "type": "object"
-      },
-      "InvoiceSummaryOut-Output": {
+      "InvoiceSummaryOut": {
         "additionalProperties": false,
         "properties": {
           "amount_paid": {
@@ -3923,7 +3244,7 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/PaymentHistoryOut-Output"
+              "$ref": "#/components/schemas/PaymentHistoryOut"
             },
             "title": "Items",
             "type": "array"
@@ -3935,88 +3256,7 @@
         "title": "PaymentHistoryListOut",
         "type": "object"
       },
-      "PaymentHistoryOut-Input": {
-        "additionalProperties": false,
-        "description": "One row of `GET /payments`.\n\nDeclared for M25: the customer screen shows a payment history, and an undeclared\nresponse left the client stringifying `unknown` values — which ESLint correctly\nrefused, because `String(someObject)` yields `[object Object]` on a screen showing\nmoney.",
-        "properties": {
-          "allocated": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Allocated"
-          },
-          "amount": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Amount"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "invoice_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Invoice Id"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "method": {
-            "title": "Method",
-            "type": "string"
-          },
-          "received_at": {
-            "format": "date-time",
-            "title": "Received At",
-            "type": "string"
-          },
-          "reference": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reference"
-          }
-        },
-        "required": [
-          "id",
-          "amount",
-          "method",
-          "received_at",
-          "kind"
-        ],
-        "title": "PaymentHistoryOut",
-        "type": "object"
-      },
-      "PaymentHistoryOut-Output": {
+      "PaymentHistoryOut": {
         "additionalProperties": false,
         "description": "One row of `GET /payments`.\n\nDeclared for M25: the customer screen shows a payment history, and an undeclared\nresponse left the client stringifying `unknown` values — which ESLint correctly\nrefused, because `String(someObject)` yields `[object Object]` on a screen showing\nmoney.",
         "properties": {
@@ -4130,7 +3370,7 @@
         "properties": {
           "allocations": {
             "items": {
-              "$ref": "#/components/schemas/AllocationOut-Output"
+              "$ref": "#/components/schemas/AllocationOut"
             },
             "title": "Allocations",
             "type": "array"
@@ -4360,62 +3600,7 @@
         "title": "PrintEventRequest",
         "type": "object"
       },
-      "PrintLineOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "item": {
-            "title": "Item",
-            "type": "string"
-          },
-          "price": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Price"
-          },
-          "quantity": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Quantity"
-          },
-          "sl_no": {
-            "title": "Sl No",
-            "type": "integer"
-          },
-          "total": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Total"
-          }
-        },
-        "required": [
-          "sl_no",
-          "item",
-          "quantity",
-          "price",
-          "total"
-        ],
-        "title": "PrintLineOut",
-        "type": "object"
-      },
-      "PrintLineOut-Output": {
+      "PrintLineOut": {
         "additionalProperties": false,
         "properties": {
           "item": {
@@ -4500,13 +3685,13 @@
           },
           "lines": {
             "items": {
-              "$ref": "#/components/schemas/PrintLineOut-Output"
+              "$ref": "#/components/schemas/PrintLineOut"
             },
             "title": "Lines",
             "type": "array"
           },
           "payment": {
-            "$ref": "#/components/schemas/PrintPaymentOut-Output"
+            "$ref": "#/components/schemas/PrintPaymentOut"
           },
           "print_profile": {
             "title": "Print Profile",
@@ -4521,7 +3706,7 @@
             "type": "string"
           },
           "totals": {
-            "$ref": "#/components/schemas/PrintTotalsOut-Output"
+            "$ref": "#/components/schemas/PrintTotalsOut"
           }
         },
         "required": [
@@ -4545,75 +3730,7 @@
         "title": "PrintPayloadOut",
         "type": "object"
       },
-      "PrintPaymentOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "amount_paid": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Amount Paid"
-          },
-          "due_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Due Date"
-          },
-          "is_credit": {
-            "title": "Is Credit",
-            "type": "boolean"
-          },
-          "method": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Method"
-          },
-          "outstanding": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Outstanding"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "status",
-          "amount_paid",
-          "outstanding",
-          "method",
-          "due_date",
-          "is_credit"
-        ],
-        "title": "PrintPaymentOut",
-        "type": "object"
-      },
-      "PrintPaymentOut-Output": {
+      "PrintPaymentOut": {
         "additionalProperties": false,
         "properties": {
           "amount_paid": {
@@ -4667,79 +3784,7 @@
         "title": "PrintPaymentOut",
         "type": "object"
       },
-      "PrintTotalsOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "discount": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Discount"
-          },
-          "grand_total": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Grand Total"
-          },
-          "rounding": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Rounding"
-          },
-          "subtotal": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Subtotal"
-          },
-          "tax": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax"
-          }
-        },
-        "required": [
-          "subtotal",
-          "discount",
-          "tax",
-          "rounding",
-          "grand_total"
-        ],
-        "title": "PrintTotalsOut",
-        "type": "object"
-      },
-      "PrintTotalsOut-Output": {
+      "PrintTotalsOut": {
         "additionalProperties": false,
         "properties": {
           "discount": {
@@ -5005,7 +4050,7 @@
           "stock": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/StockOut-Output"
+                "$ref": "#/components/schemas/StockOut"
               },
               {
                 "type": "null"
@@ -5299,7 +4344,7 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/PurchaseSummaryOut-Output"
+              "$ref": "#/components/schemas/PurchaseSummaryOut"
             },
             "title": "Items",
             "type": "array"
@@ -5311,90 +4356,7 @@
         "title": "PurchaseListOut",
         "type": "object"
       },
-      "PurchaseSummaryOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "document_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Document Date"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "line_count": {
-            "title": "Line Count",
-            "type": "integer"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "subtotal": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Subtotal"
-          },
-          "supplier_document_number": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Supplier Document Number"
-          },
-          "supplier_id": {
-            "format": "uuid",
-            "title": "Supplier Id",
-            "type": "string"
-          },
-          "supplier_name": {
-            "title": "Supplier Name",
-            "type": "string"
-          },
-          "total": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Total"
-          }
-        },
-        "required": [
-          "id",
-          "supplier_id",
-          "supplier_name",
-          "status",
-          "subtotal",
-          "total",
-          "line_count"
-        ],
-        "title": "PurchaseSummaryOut",
-        "type": "object"
-      },
-      "PurchaseSummaryOut-Output": {
+      "PurchaseSummaryOut": {
         "additionalProperties": false,
         "properties": {
           "document_date": {
@@ -5952,53 +4914,7 @@
         "title": "SettingUpdateRequest",
         "type": "object"
       },
-      "StockBalanceOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "product_id": {
-            "format": "uuid",
-            "title": "Product Id",
-            "type": "string"
-          },
-          "quantity": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Quantity"
-          },
-          "reorder_level": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reorder Level"
-          }
-        },
-        "required": [
-          "product_id",
-          "name",
-          "quantity"
-        ],
-        "title": "StockBalanceOut",
-        "type": "object"
-      },
-      "StockBalanceOut-Output": {
+      "StockBalanceOut": {
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -6044,7 +4960,7 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/StockBalanceOut-Output"
+              "$ref": "#/components/schemas/StockBalanceOut"
             },
             "title": "Items",
             "type": "array"
@@ -6057,90 +4973,7 @@
         "title": "StockBalancesOut",
         "type": "object"
       },
-      "StockMovementOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "balance_after": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Balance After"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "override_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Override Reason"
-          },
-          "oversell_override": {
-            "title": "Oversell Override",
-            "type": "boolean"
-          },
-          "product_id": {
-            "format": "uuid",
-            "title": "Product Id",
-            "type": "string"
-          },
-          "quantity_delta": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Quantity Delta"
-          },
-          "reason": {
-            "title": "Reason",
-            "type": "string"
-          },
-          "source_id": {
-            "format": "uuid",
-            "title": "Source Id",
-            "type": "string"
-          },
-          "source_type": {
-            "title": "Source Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "product_id",
-          "quantity_delta",
-          "balance_after",
-          "reason",
-          "source_type",
-          "source_id",
-          "oversell_override",
-          "created_at"
-        ],
-        "title": "StockMovementOut",
-        "type": "object"
-      },
-      "StockMovementOut-Output": {
+      "StockMovementOut": {
         "additionalProperties": false,
         "properties": {
           "balance_after": {
@@ -6219,7 +5052,7 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/StockMovementOut-Output"
+              "$ref": "#/components/schemas/StockMovementOut"
             },
             "title": "Items",
             "type": "array"
@@ -6232,33 +5065,7 @@
         "title": "StockMovementsOut",
         "type": "object"
       },
-      "StockOut-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "as_of": {
-            "title": "As Of",
-            "type": "string"
-          },
-          "branch_quantity": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "title": "Branch Quantity"
-          }
-        },
-        "required": [
-          "branch_quantity",
-          "as_of"
-        ],
-        "title": "StockOut",
-        "type": "object"
-      },
-      "StockOut-Output": {
+      "StockOut": {
         "additionalProperties": false,
         "properties": {
           "as_of": {
@@ -6617,6 +5424,13 @@
       },
       "ValidationError": {
         "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
           "loc": {
             "items": {
               "anyOf": [
@@ -6785,6 +5599,193 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/admin/counters": {
+      "get": {
+        "operationId": "list_counters_api_v1_admin_counters_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CounterOut"
+                  },
+                  "title": "Response List Counters Api V1 Admin Counters Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Counters",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/counters/{counter_id}": {
+      "put": {
+        "description": "FR-ADMIN-003: a counter's name, draft capacity (minimum 20, C-5) and whether it\nis open for business.",
+        "operationId": "update_counter_api_v1_admin_counters__counter_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "counter_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Counter Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CounterUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CounterOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Counter",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/devices": {
       "get": {
         "operationId": "list_devices_api_v1_admin_devices_get",
@@ -6865,6 +5866,108 @@
           }
         },
         "summary": "List Devices",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/devices/{device_id}/counter": {
+      "put": {
+        "description": "Decide which counter a registered computer bills as (C-2).\n\n`admin.settings.manage`, not `admin.devices.manage`: this chooses whose takings the\nmachine's next sale is attributed to, which is business configuration rather than\ndevice hygiene. Reasoning in `bm.domain.auth.counters`.",
+        "operationId": "assign_device_counter_api_v1_admin_devices__device_id__counter_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignCounterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Assign Device Counter",
         "tags": [
           "admin"
         ]

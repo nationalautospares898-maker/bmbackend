@@ -51,6 +51,9 @@ BRANCH_ID = uuid.UUID("0192f100-0000-7000-8000-0000000000a1")
 COUNTER_ID = uuid.UUID("0192f100-0000-7000-8000-0000000000c1")
 USER_ID = uuid.UUID("0192f100-0000-7000-8000-0000000000e1")
 DEVICE_ID = uuid.UUID("0192f100-0000-7000-8000-0000000000d1")
+#: A second counter and an unassigned device, for the C-2 counter-assignment suite.
+COUNTER_2_ID = uuid.UUID("0192f100-0000-7000-8000-0000000000c2")
+UNASSIGNED_DEVICE_ID = uuid.UUID("0192f100-0000-7000-8000-0000000000d2")
 
 E2E_USERNAME = "e2e-owner"
 #: Test-only, in a disposable database. Long enough to satisfy any policy minimum.
@@ -147,6 +150,25 @@ _TABLES = (
 )
 
 
+#: Three of the tables above are not business-scoped, so `WHERE business_id = :b` is a
+#: syntax error on them rather than a narrower delete. Each needs its own predicate:
+#:
+#: * `refresh_tokens` reaches the business through its user;
+#: * `tax_rates` through its tax group;
+#: * `jobs` is a global queue with no tenant column at all, and the one row the seed path
+#:   can leave behind is an `import.parse` enqueued by a test upload.
+#:
+#: `tests/fixtures.py` deletes these unqualified because it owns the whole test database.
+#: This script is narrower by design — it promises to remove "the E2E business, and only
+#: it" — so the first two stay scoped and only the queue is cleared wholesale, which is
+#: safe precisely because this script refuses to run anywhere but a disposable database.
+_NON_TENANT_PREDICATES: dict[str, str] = {
+    "refresh_tokens": "user_id IN (SELECT id FROM users WHERE business_id = :b)",
+    "tax_rates": "tax_group_id IN (SELECT id FROM tax_groups WHERE business_id = :b)",
+    "jobs": "true",
+}
+
+
 def reset(session: Session) -> None:
     """Remove the E2E business, and only it."""
     business = session.execute(
@@ -155,11 +177,13 @@ def reset(session: Session) -> None:
     if business is None:
         return
     for table in _TABLES:
-        if session.execute(text("SELECT to_regclass(:n) IS NOT NULL"), {"n": table}).scalar():
-            session.execute(
-                text(f"DELETE FROM {table} WHERE business_id = :b"),  # fixed tuple above
-                {"b": business},
-            )
+        if not session.execute(text("SELECT to_regclass(:n) IS NOT NULL"), {"n": table}).scalar():
+            continue
+        predicate = _NON_TENANT_PREDICATES.get(table, "business_id = :b")
+        session.execute(
+            text(f"DELETE FROM {table} WHERE {predicate}"),  # both halves are fixed above
+            {"b": business},
+        )
     session.execute(text("DELETE FROM businesses WHERE id = :b"), {"b": business})
     session.commit()
     print(f"reset: removed {business}")
@@ -233,6 +257,26 @@ def seed(session: Session) -> None:
         ),
         {"id": DEVICE_ID, "b": BUSINESS_ID, "br": BRANCH_ID, "c": COUNTER_ID},
     )
+    # A second counter, so the counter-assignment suite can *re*assign rather than only
+    # assign — reassignment is the case with a previous value to get wrong.
+    session.execute(
+        text(
+            "INSERT INTO counters (id, business_id, branch_id, code, name, is_active,"
+            " max_open_drafts) VALUES (:id, :b, :br, 'C2', 'Counter 2', true, 20)"
+        ),
+        {"id": COUNTER_2_ID, "b": BUSINESS_ID, "br": BRANCH_ID},
+    )
+    # A device registered to the branch with **no counter** — exactly what
+    # `register_device` produces for a brand-new browser profile, and the state that left
+    # a freshly installed counter PC unable to bill (C-2). Seeded rather than enrolled in
+    # the browser so the assignment suite starts from it deterministically.
+    session.execute(
+        text(
+            "INSERT INTO devices (id, business_id, branch_id, counter_id, status, label)"
+            " VALUES (:id, :b, :br, NULL, 'active', 'Unassigned Counter PC')"
+        ),
+        {"id": UNASSIGNED_DEVICE_ID, "b": BUSINESS_ID, "br": BRANCH_ID},
+    )
     session.commit()
     print(f"seeded business={BUSINESS_ID}")
 
@@ -254,6 +298,8 @@ def main() -> None:
     print(f"  BM_E2E_PASSWORD={E2E_PASSWORD}")
     print(f"  BM_E2E_COUNTER_ID={COUNTER_ID}")
     print(f"  BM_E2E_DEVICE_ID={DEVICE_ID}")
+    print(f"  BM_E2E_COUNTER_2_ID={COUNTER_2_ID}")
+    print(f"  BM_E2E_UNASSIGNED_DEVICE_ID={UNASSIGNED_DEVICE_ID}")
 
 
 if __name__ == "__main__":

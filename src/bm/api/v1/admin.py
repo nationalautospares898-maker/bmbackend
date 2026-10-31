@@ -1,4 +1,4 @@
-"""Administration endpoints: users and devices.
+"""Administration endpoints: users, devices and counters.
 
 Zero business logic here (`CLAUDE.md §4`) — each route declares its permission, validates
 its body, and delegates. Settings administration lands with M4 and invoice-series
@@ -16,6 +16,7 @@ from pydantic import Field
 
 from bm.api.deps import ClockDep, CurrentContext, SettingsDep, WriteSession, require
 from bm.api.v1.schemas.common import ResponseModel, StrictModel
+from bm.domain.auth.counters import MIN_OPEN_DRAFTS, CounterAdminService
 from bm.domain.auth.devices import DeviceService
 from bm.domain.auth.permissions import Permission
 from bm.domain.auth.users import UserAdminService
@@ -57,6 +58,43 @@ class DeviceOut(ResponseModel):
 
 class RevokeDeviceRequest(StrictModel):
     reason: str = Field(min_length=3, max_length=500)
+
+
+class AssignCounterRequest(StrictModel):
+    """`null` detaches the computer from every counter.
+
+    A sub-resource carrying one field rather than a general `PUT /admin/devices/{id}`:
+    this is the only device column an administrator may set here, and a wider body would
+    let a counter assignment also rewrite a device's label, branch or revocation state.
+    """
+
+    counter_id: uuid.UUID | None
+
+
+class CounterDeviceOut(ResponseModel):
+    id: uuid.UUID
+    label: str
+    status: str
+    last_seen_at: datetime | None
+
+
+class CounterOut(ResponseModel):
+    id: uuid.UUID
+    code: str
+    name: str
+    branch_id: uuid.UUID
+    max_open_drafts: int
+    is_active: bool
+    #: Every computer currently billing as this counter. Plural by design — see the note
+    #: in `bm.domain.auth.counters`.
+    devices: list[CounterDeviceOut]
+
+
+class CounterUpdateRequest(StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    #: C-5's floor, refused here as well as in the service and the database.
+    max_open_drafts: int | None = Field(default=None, ge=MIN_OPEN_DRAFTS)
+    is_active: bool | None = None
 
 
 # --- wiring ------------------------------------------------------------------
@@ -128,3 +166,52 @@ def revoke_device(
     blocking screen. Unsynced drafts are lost by design; they were never sales (E-11).
     """
     DeviceService(session, clock).revoke(ctx, device_id, reason=body.reason)
+
+
+@router.put("/devices/{device_id}/counter", response_model=DeviceOut)
+def assign_device_counter(
+    device_id: uuid.UUID,
+    body: AssignCounterRequest,
+    session: WriteSession,
+    ctx: Annotated[CurrentContext, Depends(require(Permission.ADMIN_SETTINGS_MANAGE))],
+) -> DeviceOut:
+    """Decide which counter a registered computer bills as (C-2).
+
+    `admin.settings.manage`, not `admin.devices.manage`: this chooses whose takings the
+    machine's next sale is attributed to, which is business configuration rather than
+    device hygiene. Reasoning in `bm.domain.auth.counters`.
+    """
+    row = CounterAdminService(session).assign_device(ctx, device_id, counter_id=body.counter_id)
+    return DeviceOut.model_validate(row)
+
+
+# --- counters ----------------------------------------------------------------
+
+
+@router.get("/counters", response_model=list[CounterOut])
+def list_counters(
+    session: WriteSession,
+    ctx: Annotated[CurrentContext, Depends(require(Permission.ADMIN_SETTINGS_MANAGE))],
+) -> list[CounterOut]:
+    return [
+        CounterOut.model_validate(row) for row in CounterAdminService(session).list_counters(ctx)
+    ]
+
+
+@router.put("/counters/{counter_id}", response_model=CounterOut)
+def update_counter(
+    counter_id: uuid.UUID,
+    body: CounterUpdateRequest,
+    session: WriteSession,
+    ctx: Annotated[CurrentContext, Depends(require(Permission.ADMIN_SETTINGS_MANAGE))],
+) -> CounterOut:
+    """FR-ADMIN-003: a counter's name, draft capacity (minimum 20, C-5) and whether it
+    is open for business."""
+    row = CounterAdminService(session).update_counter(
+        ctx,
+        counter_id,
+        name=body.name,
+        max_open_drafts=body.max_open_drafts,
+        is_active=body.is_active,
+    )
+    return CounterOut.model_validate(row)

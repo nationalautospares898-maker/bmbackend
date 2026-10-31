@@ -20,11 +20,11 @@ import uuid
 
 import pytest
 from fastapi import FastAPI
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from bm.api.deps import ANY_AUTHENTICATED, PERMISSION_MARKER
+from bm.api.route_policy import mounted_routes
 from bm.domain.auth.permissions import ROLE_PERMISSIONS, SystemRole
 from tests.fixtures import Tenant, UserFixture, create_tenant, create_user
 
@@ -32,10 +32,16 @@ pytestmark = pytest.mark.db
 
 
 def _route_permissions(app: FastAPI) -> list[tuple[str, str, str]]:
-    """`(method, path, permission)` for every permissioned route."""
+    """`(method, path, permission)` for every permissioned route.
+
+    Walks via `bm.api.route_policy.mounted_routes` rather than `app.routes` directly:
+    from FastAPI 0.141 an included router appears as a single opaque entry, so the old
+    flat `isinstance(route, APIRoute)` filter matched 3 of 90 routes and this matrix came
+    back empty. `test_the_matrix_is_not_empty` below is what caught it.
+    """
     found: list[tuple[str, str, str]] = []
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
+    for route in mounted_routes(app):
+        if route.dependant is None:
             continue
         for dependency in route.dependant.dependencies:
             call = dependency.call

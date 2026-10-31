@@ -396,14 +396,23 @@ def test_search_declares_the_catalog_read_permission_and_refuses_anonymously(
     future role without `catalog.read` is covered there automatically.
     """
     from bm.api.deps import PERMISSION_MARKER
+    from bm.api.route_policy import mounted_routes
     from bm.domain.auth.permissions import Permission
 
-    # The guard is declared on the route.
+    # The guard is declared on the route. `mounted_routes` rather than `app.routes`: from
+    # FastAPI 0.141 the search route lives inside an included router and a flat scan does
+    # not see it — which made `declared` an empty set and this assertion unsatisfiable.
+    matching = [
+        r
+        for r in mounted_routes(api_client.app)  # type: ignore[arg-type]
+        if r.path == "/api/v1/products/search"
+    ]
+    assert matching, "the search route was not found in the mounted route table"
     declared = {
         str(getattr(dep.call, PERMISSION_MARKER))
-        for route in api_client.app.routes  # type: ignore[union-attr]
-        if getattr(route, "path", None) == "/api/v1/products/search"
-        for dep in route.dependant.dependencies  # type: ignore[attr-defined]
+        for route in matching
+        if route.dependant is not None
+        for dep in route.dependant.dependencies
         if dep.call is not None and hasattr(dep.call, PERMISSION_MARKER)
     }
     assert str(Permission.CATALOG_READ) in declared

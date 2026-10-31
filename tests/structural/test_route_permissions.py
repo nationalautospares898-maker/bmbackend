@@ -16,10 +16,14 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
-from fastapi.routing import APIRoute
 
 from bm.api.deps import ANY_AUTHENTICATED, PERMISSION_MARKER
-from bm.api.route_policy import AUTHENTICATED_ONLY_ROUTES, PUBLIC_ROUTES
+from bm.api.route_policy import (
+    AUTHENTICATED_ONLY_ROUTES,
+    PUBLIC_ROUTES,
+    MountedRoute,
+    mounted_routes,
+)
 from bm.config import Settings
 from bm.domain.auth.permissions import Permission
 from bm.main import create_app
@@ -40,8 +44,10 @@ def app() -> FastAPI:
     )
 
 
-def _declared_permission(route: APIRoute) -> str | None:
+def _declared_permission(route: MountedRoute) -> str | None:
     """The marker `require()` / `authenticated_only()` leaves on the dependency."""
+    if route.dependant is None:
+        return None
     for dependency in route.dependant.dependencies:
         call = dependency.call
         if call is not None and hasattr(call, PERMISSION_MARKER):
@@ -49,8 +55,40 @@ def _declared_permission(route: APIRoute) -> str | None:
     return None
 
 
-def _api_routes(app: FastAPI) -> list[APIRoute]:
-    return [r for r in app.routes if isinstance(r, APIRoute)]
+def _api_routes(app: FastAPI) -> list[MountedRoute]:
+    """Routes carrying a dependency tree, i.e. everything except the docs endpoints.
+
+    `mounted_routes` rather than a flat scan of `app.routes`: see the note in
+    `bm.api.route_policy`. A flat `isinstance(r, APIRoute)` filter returns 3 of 90 on
+    FastAPI 0.141, which turns every assertion in this file into a tautology.
+    """
+    return [r for r in mounted_routes(app) if r.dependant is not None]
+
+
+def test_the_route_walk_sees_the_whole_api(app: FastAPI) -> None:
+    """The anti-vacuity guard for every other test in this file.
+
+    Each one below is of the form "no route does X". That shape passes trivially when the
+    walk returns nothing, which is exactly what happened when FastAPI 0.141 stopped
+    flattening included routers. A count floor is crude, but it is the one assertion that
+    cannot be satisfied by an empty enumeration — and it fails loudly on the upgrade that
+    would otherwise quietly disarm the suite.
+    """
+    guarded = _api_routes(app)
+    assert len(guarded) >= 80, (
+        f"Only {len(guarded)} routes were found; this file's guarantees are vacuous. "
+        "bm.api.route_policy.mounted_routes is no longer reaching the included routers."
+    )
+
+    # Spot-check one route from each of three different included sub-routers, so a walk
+    # that finds *a* router but silently drops the rest also fails.
+    paths = {r.path for r in guarded}
+    for expected in (
+        "/api/v1/auth/login",
+        "/api/v1/admin/devices",
+        "/api/v1/products/search",
+    ):
+        assert expected in paths, f"{expected} was not reached by the route walk"
 
 
 def test_every_route_declares_a_permission_or_is_listed_as_public(app: FastAPI) -> None:
@@ -102,9 +140,9 @@ def test_declared_permissions_exist_in_the_vocabulary(app: FastAPI) -> None:
 def test_public_route_list_has_no_stale_entries(app: FastAPI) -> None:
     """A path that no longer exists but is still listed as public is how an exemption
     gets inherited by a future route with the same path."""
-    # Every mounted route, not only APIRoute: the docs and openapi endpoints are
+    # Every mounted route, not only the API ones: the docs and openapi endpoints are
     # plain Starlette routes and are legitimately listed as public.
-    existing = {getattr(route, "path", "") for route in app.routes}
+    existing = {route.path for route in mounted_routes(app)}
     stale = sorted(set(PUBLIC_ROUTES) - existing)
     assert stale == [], f"PUBLIC_ROUTES lists paths that no longer exist: {stale}"
 
