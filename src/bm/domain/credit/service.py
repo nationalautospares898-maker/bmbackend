@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from bm.domain.audit import service as audit
 from bm.domain.audit.service import AuditAction
 from bm.domain.auth.permissions import Permission
-from bm.domain.shared.clock import Clock
+from bm.domain.shared.clock import Clock, business_date
 from bm.domain.shared.context import AuthContext
 from bm.domain.shared.errors import (
     InvoiceCancelled,
@@ -97,6 +97,46 @@ class CreditService:
     def __init__(self, session: Session, clock: Clock) -> None:
         self._session = session
         self._clock = clock
+
+    def _today(self, ctx: AuthContext) -> date:
+        """Today, as the **business's** calendar reckons it.
+
+        Every query below compares this against `invoices.due_date`, and `due_date` is a
+        `DATE` produced by `business_date(now, timezone) + terms` — a business-local
+        calendar date, with a comment in `SalesService` citing T3-02 for exactly that
+        reason. Taking `today` from `clock.now().date()` therefore compared a
+        business-local date against a **UTC** one: two different calendars either side of
+        the same subtraction.
+
+        For `Asia/Kolkata` they disagree for the first 5½ hours of every day, and the
+        consequences are financial rather than cosmetic:
+
+        * an invoice due **today** was reported **one day overdue** between 00:00 and
+          05:30 local, because `:today` was still yesterday — so `due_date < :today` was
+          false while `(:today - due_date) BETWEEN 1 AND 30` had already become true;
+        * every ageing bucket shifted with it, moving balances across the 30/60/90
+          boundaries a day early;
+        * `credit-outstanding`'s `overdue` total disagreed with the ageing buckets
+          computed from the same rows.
+
+        This is not a new policy. T3-02's own acceptance criterion
+        (`PHASE-2-IMPLEMENTATION-PLAN.md`) is that "the financial-year boundary **and
+        report day-boundaries** are evaluated in business-local time rather than UTC",
+        and FR-CREDIT-005/FR-RPT-002 are report day-boundaries. It makes both sides of a
+        comparison use the same calendar, which is what the code already said it did.
+
+        Read from the business row rather than from `ctx.business_timezone`, matching
+        `ReportService._business_timezone`: the context's copy can come from a token
+        claim, and one source of truth for a financial boundary is worth the query.
+        """
+        timezone = (
+            self._session.execute(
+                text("SELECT timezone FROM businesses WHERE id = :id"),
+                {"id": ctx.business_id},
+            ).scalar_one_or_none()
+            or "Asia/Kolkata"
+        )
+        return business_date(self._clock.now(), timezone)
 
     # --- payment recording ----------------------------------------------------
 
@@ -351,7 +391,12 @@ class CreditService:
                 " WHERE id = :id AND business_id = :business_id FOR UPDATE"
             ),
             {"id": invoice_id, "business_id": ctx.business_id},
-        ).one()
+            # `first()`, not `one()`. With `one()` the `row is None` guard below was
+            # unreachable and an unknown or cross-tenant invoice id raised
+            # `NoResultFound` — surfacing as a 500 rather than the intended 404, in a
+            # path a client reaches by naming an invoice in an allocation. The guard was
+            # always the intended behaviour; it simply could not run.
+        ).first()
         if row is None:
             raise NotFound("That bill does not exist.")
         if row.status == "cancelled":
@@ -382,7 +427,9 @@ class CreditService:
                 """
             ),
             {"id": invoice_id, "business_id": ctx.business_id},
-        ).one()
+            # `first()` for the same reason as `_locked_outstanding`: the guard below is
+            # the intended behaviour and `one()` made it unreachable.
+        ).first()
         if row is None:
             return
 
@@ -492,7 +539,7 @@ class CreditService:
     ) -> list[OutstandingInvoice]:
         """Derived from authoritative data (FR-CREDIT-002), never from the cache table."""
         ctx.require(Permission.CREDIT_READ)
-        today = self._clock.now().date()
+        today = self._today(ctx)
 
         query = """
             SELECT i.id, i.invoice_number, i.issued_at, i.due_date, i.total,
@@ -544,7 +591,7 @@ class CreditService:
         60/61/90/91, which is what the boundary test with a frozen clock asserts.
         """
         ctx.require(Permission.CREDIT_READ)
-        today = self._clock.now().date()
+        today = self._today(ctx)
 
         sql = """
             WITH credit_invoices AS (
@@ -665,7 +712,7 @@ class CreditService:
     def ageing_summary(self, ctx: AuthContext) -> dict[str, str]:
         """Buckets: current, 1-30, 31-60, 61-90, 90+ (`API-SPECIFICATION.md §3.7`)."""
         ctx.require(Permission.CREDIT_READ)
-        today = self._clock.now().date()
+        today = self._today(ctx)
         row = self._session.execute(
             text(
                 """

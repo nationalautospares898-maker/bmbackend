@@ -1,5 +1,27 @@
 name: CI
 
+# Why every job creates a virtual environment
+# -------------------------------------------
+#
+# Until 31 October 2026 every job in this workflow failed, on every commit, at the
+# install step — including `uv pip install --system pip-audit`, which does not involve
+# this project's code at all. Step-level conclusions from the Actions API showed the
+# pattern precisely: `Set up job`, `checkout`, `setup-uv` and `uv python install 3.11`
+# all succeeded, then `uv pip install --system …` failed and every real check was
+# skipped. `Secret scan`, the only job that does not install anything, was the only job
+# that passed.
+#
+# So no lint, no type check, no test and no migration check had ever actually run here.
+# The audit's remark that CI "appears to enforce only an overall 85% coverage threshold"
+# was generous: it enforced nothing.
+#
+# `--system` targets the runner's own interpreter, which Ubuntu marks
+# externally-managed (PEP 668), so an install into it is refused. `uv venv` plus an
+# activated environment avoids that entirely and is also more reproducible: the
+# interpreter is the 3.11 this project pins in `pyproject.toml` and `[tool.mypy]`,
+# rather than whatever the image ships. `$GITHUB_ENV` carries the activation to the
+# later steps so each one is an ordinary command again.
+
 on:
   push:
     branches: [main]
@@ -27,9 +49,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv python install 3.11
+      - name: Create the 3.11 environment
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Install
-        run: uv pip install --system -e ".[dev]"
+        run: uv pip install -e ".[dev]"
       - name: ruff
         run: ruff check .
       - name: ruff format
@@ -65,9 +92,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv python install 3.11
+      - name: Create the 3.11 environment
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Install
-        run: uv pip install --system -e ".[dev]"
+        run: uv pip install -e ".[dev]"
       - name: Create the application role
         run: |
           PGPASSWORD=ci_only_password psql -h localhost -U bm_migrate -d bm_test -v ON_ERROR_STOP=1 <<'SQL'
@@ -82,17 +114,30 @@ jobs:
           SQL
       - name: Migrate
         run: alembic upgrade head
+      # Audit Issue C. ORM metadata and the migrated schema must agree, or the next
+      # `alembic revision --autogenerate` proposes dropping the twelve objects the
+      # audit found missing from metadata — among them the search indexes NFR-PERF-001
+      # depends on. `tests/invariants/test_schema_drift.py` asserts the same thing from
+      # inside the suite; this runs the CLI so the two cannot disagree silently.
+      - name: Schema drift (alembic check)
+        run: alembic check
       - name: pytest
-        run: pytest --cov --cov-report=term-missing --cov-report=xml
-      - name: Coverage floors
-        # ≥85% overall; the money, sales, inventory, credit and sync modules carry a
-        # ≥95% branch floor asserted by their own milestone suites.
-        run: coverage report --fail-under=85
+        run: pytest --cov --cov-report=term-missing --cov-report=xml --cov-report=json
+      # Audit Issue B. `coverage report --fail-under=85` is kept, and is no longer the
+      # only gate: the five critical modules carry their own 95% **branch** floor, which
+      # an average over the whole codebase cannot fail on. The floors live in
+      # `scripts/check_coverage.py`, in the repository, next to the code they describe —
+      # not in this file, where they could be edited by whoever is trying to get a build
+      # through.
+      - name: Coverage floors (overall and per-module)
+        run: python scripts/check_coverage.py --show-missing
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage
-          path: coverage.xml
+          path: |
+            coverage.xml
+            coverage.json
 
   migrations:
     name: Migrations upgrade and downgrade
@@ -114,15 +159,88 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv python install 3.11
-      - run: uv pip install --system -e ".[dev]"
+        with:
+          enable-cache: true
+      - name: Create the 3.11 environment
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Install
+        run: uv pip install -e ".[dev]"
       # A migration without a working downgrade is not merged (NFR-MAINT-004).
       - name: upgrade head
         run: alembic upgrade head
+      # This job deliberately has **no `bm_app` role**, which is how the conditional in
+      # migration `0010` came to matter: it created `fk_counters__invoice_series` only
+      # `if _app_role_exists()`, so every run of this job produced a schema missing that
+      # foreign key. Migration `0021` adds it unconditionally; this asserts the result
+      # rather than trusting it.
+      - name: the deferred foreign key exists even without the app role
+        run: |
+          PGPASSWORD=ci_only_password psql -h localhost -p 5433 -U bm_migrate -d bm_migrations \
+            -v ON_ERROR_STOP=1 -t -A -c \
+            "SELECT count(*) FROM pg_constraint WHERE conname = 'fk_counters__invoice_series'" \
+            | grep -qx 1
       - name: downgrade base
         run: alembic downgrade base
       - name: upgrade head again
         run: alembic upgrade head
+      - name: schema drift after a full roundtrip
+        run: alembic check
+
+  performance:
+    name: Performance (NFR-PERF, 100k catalogue)
+    runs-on: ubuntu-latest
+    # Audit Issue A / G. Seeding 100 000 products and running the load suite takes
+    # minutes, so this does not gate every pull request. It runs on `main`, and on a
+    # pull request carrying the `performance` label when a change is expected to affect
+    # a query plan.
+    #
+    # It is a **real** run, not a placeholder: the same `scripts/seed_demo.py` dataset
+    # and the same unmodified thresholds in `tests/load/test_performance.py`. What it is
+    # not is a production measurement — a runner's cores are not the shop's server — so
+    # the 50-concurrent figure remains a staging item, exactly as that suite's own
+    # docstring says.
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      contains(github.event.pull_request.labels.*.name, 'performance')
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bm_migrate
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: bm_perf
+        ports: ["5434:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bm_migrate -d bm_perf"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      BM_MIGRATION_DATABASE_URL: postgresql+psycopg://bm_migrate:ci_only_password@localhost:5434/bm_perf
+      BM_DATABASE_URL: postgresql+psycopg://bm_migrate:ci_only_password@localhost:5434/bm_perf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Create the 3.11 environment
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Install
+        run: uv pip install -e ".[dev]"
+      - name: Migrate
+        run: alembic upgrade head
+      - name: Seed the documented 100 000-product catalogue
+        run: python scripts/seed_demo.py --products 100000 --customers 200 --reset
+      # Thresholds come from the suite, which comes from PRD §7.1. Nothing here relaxes
+      # them, and the suite skips loudly rather than silently if the dataset is absent.
+      - name: Load suite
+        run: pytest tests/load -m slow -q -s
 
   secrets:
     name: Secret scan
@@ -136,14 +254,77 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  packaging:
+    name: A fresh clone is complete and importable
+    runs-on: ubuntu-latest
+    # Audit follow-up. `.gitignore` carried an unanchored `storage/`, which matched
+    # `src/bm/infra/storage/` as well as the root upload directory it was written for.
+    # The module was therefore never pushed, and a fresh clone could not import
+    # `bm.api.v1.imports` at all — `mypy src/` reported two errors and `pytest` could
+    # not collect `tests/unit/test_upload_storage.py`. Nothing in a working tree showed
+    # it, because an ignored file is invisible rather than untracked.
+    #
+    # This job imports every module from a clean checkout, so the next such omission
+    # fails here instead of silently shipping.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Create the 3.11 environment
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Install without dev extras, as a deployment would
+        run: uv pip install -e "."
+      - name: Import every module
+        run: |
+          python - <<'PY'
+          import importlib, pkgutil, sys
+          import bm
+
+          failed = []
+          for module in pkgutil.walk_packages(bm.__path__, prefix="bm."):
+              try:
+                  importlib.import_module(module.name)
+              except Exception as exc:  # noqa: BLE001 — reporting, not handling
+                  failed.append(f"{module.name}: {type(exc).__name__}: {exc}")
+          if failed:
+              print("Modules that do not import from a fresh clone:")
+              for line in failed:
+                  print(f"  - {line}")
+              sys.exit(1)
+          print("every bm.* module imports from a clean checkout")
+          PY
+      - name: The application starts
+        run: python -c "from bm.main import create_app; print('app factory import OK')"
+
   dependencies:
     name: Dependency audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv python install 3.11
-      - run: uv pip install --system pip-audit
-      - run: uv pip install --system -e "."
+        with:
+          enable-cache: true
+      - name: Create the 3.11 environment
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Install
+        run: |
+          uv pip install pip-audit
+          uv pip install -e "."
       # High/critical findings block release (NFR-SEC-010).
-      - run: pip-audit --strict --ignore-vuln GHSA-0000-0000-0000 || pip-audit
+      #
+      # The previous form ended `|| pip-audit`, which ran the same command again on
+      # failure and reported the same failure — a fallback that could only ever repeat
+      # itself. It also carried `--ignore-vuln GHSA-0000-0000-0000`, a placeholder
+      # advisory id that ignores nothing. Both are gone; a real finding should be
+      # triaged with a real id and a comment saying why.
+      - name: pip-audit
+        run: pip-audit --strict

@@ -212,3 +212,9 @@ Index(
     StockMovement.created_at.desc(),
 )
 Index("ix_stock_movements__source", StockMovement.source_type, StockMovement.source_id)
+#: The `0017` child-table tenancy index. See the note in `catalog.py`.
+Index(
+    "ix_stock_count_items__business",
+    StockCountItem.business_id,
+    StockCountItem.stock_count_session_id,
+)

@@ -21,13 +21,30 @@ auditability over cleverness or speed of delivery.
 
 ## 2. Current state — verified, not assumed
 
-**As of 2026-10-30 this repository contains documentation only.** No source, no `pyproject.toml`,
-no migrations. It **is** now a Git repository connected to
-`github.com/nationalautospares898-maker/bmbackend`, holding the documentation baseline and nothing
-else. Phase 1 produced documentation only. **Phase 2 also produced documentation only** —
-planning artifacts, no code.
+**As of 2026-10-31 this repository contains a working implementation.** `src/bm/` holds the
+FastAPI application, the domain services and the ORM models; `migrations/` holds revisions
+`0001`–`0021`; `tests/` holds the unit, API, integration, concurrency, invariant, structural,
+property and load suites; `pyproject.toml`, `alembic.ini`, `docker-compose.yml` and
+`.github/workflows/ci.yml` are all present.
 
-**Current phase: Phase 2 CLOSED (planning). Phase 3 (implementation) has not started.**
+Phase 1 and Phase 2 did produce documentation only, and the closure reports recording that remain
+accurate **as records of those phases**. The sentence that used to stand here — that the repository
+contains documentation only — stopped being true once Phase 3 began committing code, and the
+30 October 2026 audit found it still in place.
+
+**Current phase: Phase 3 (implementation) in progress.** See `docs/PHASE-3-PROGRESS.md` for the
+milestone state. Phase 2 remains CLOSED as a planning phase.
+
+⚠️ **Two things the audit found that this file previously implied were fine, and were not:**
+
+- **CI had never run a single check.** Every job failed at `uv pip install --system …`, which is
+  refused on an externally-managed interpreter (PEP 668), so lint, types, tests and migrations were
+  all skipped on every commit. The workflow now builds a `uv venv` first. Do not read a green
+  historical badge as evidence of anything before 31 October 2026.
+- **`.gitignore` was hiding source.** An unanchored `storage/` matched `src/bm/infra/storage/` as
+  well as the root upload directory, so that module was never pushed and a fresh clone could not
+  import `bm.api.v1.imports`. The pattern is now anchored (`/storage/`), and a `packaging` CI job
+  imports every `bm.*` module from a clean checkout so the next such omission fails loudly.
 **★ Read `docs/PHASE-2-CLOSURE-ADDENDUM-1.md` first** — the owner's fourth answer set changed four
 things. Then read `docs/PHASE-2-IMPLEMENTATION-PLAN.md` and check your milestone's
 **"must not build yet"** row.
@@ -44,10 +61,12 @@ things. Then read `docs/PHASE-2-IMPLEMENTATION-PLAN.md` and check your milestone
 M1's repository gate is met — see `docs/PHASE-2-CLOSURE-ADDENDUM-2.md §7`.
 
 Therefore:
-- **Never claim a file, module, test or endpoint exists without reading it first.**
-- The stack below is a **proposal from `docs/DECISIONS.md`**, not verified existing code. If you find
-  code that contradicts it, the code is the fact — read it and reconcile the documentation rather
-  than rewriting the code to match the docs.
+- **Never claim a file, module, test or endpoint exists without reading it first.** This matters
+  more now that most of them do exist, not less: the audit found a comment on `SEARCH_SQL`
+  asserting that an "M5 catalog suite" proved the search ranking, and no such suite existed.
+- The stack below **was** a proposal from `docs/DECISIONS.md`; it is now largely implemented. Where
+  code and documentation disagree, the code is the fact — read it and reconcile the documentation
+  rather than rewriting the code to match the docs.
 - Do not say "tests pass" unless you ran them and saw output.
 
 ---

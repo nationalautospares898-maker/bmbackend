@@ -19,9 +19,33 @@ from bm.api.deps import ClockDep, CurrentContext, ReadSession, require
 from bm.api.v1.schemas.responses import DailySalesOut, ReportOut
 from bm.domain.auth.permissions import Permission
 from bm.domain.reports.service import ReportEnvelope, ReportService
+from bm.domain.shared.clock import Clock, business_date
 from bm.domain.shared.errors import NotFound, ValidationFailed
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+def _today(clock: Clock, ctx: CurrentContext) -> date:
+    """Today, in the **business's** timezone.
+
+    This module's own docstring promises that day boundaries use business-local time
+    (T3-02), and the report SQL keeps that promise — it groups on
+    `(issued_at AT TIME ZONE :timezone)::date`. The *default date* did not: every
+    endpoint below passed `clock.now().date()`, which is the **UTC** date, because
+    `SystemClock` is UTC by design.
+
+    For `Asia/Kolkata` (UTC+5:30) the two disagree for the first five and a half hours
+    of every business day. Between 00:00 and 05:30 local, a report asked for "today"
+    defaulted to *yesterday's* business date and came back empty — so an owner cashing up
+    after midnight saw no bills for the ones they had just rung through, and the
+    `daily-sales`/`credit-outstanding` reconciliation reported zero against a non-zero
+    credit balance. Reproduced at 2026-10-31 00:22 IST, which is what made two
+    integration tests fail that had passed earlier the same day.
+
+    `business_date` already existed for exactly this, and is documented for exactly this;
+    it simply was not called here.
+    """
+    return business_date(clock.now(), ctx.business_timezone)
 
 
 def _envelope(report: ReportEnvelope) -> dict[str, Any]:
@@ -60,7 +84,7 @@ def daily_sales(
     **Credit sales are included**, on their sale date (FR-RPT-001) — a credit sale is a
     sale, and excluding it would understate the day's trading.
     """
-    start, end = _date_range(report_date, from_date, to_date, clock.now().date())
+    start, end = _date_range(report_date, from_date, to_date, _today(clock, ctx))
     return _envelope(
         ReportService(session, clock).daily_sales(
             ctx, from_date=start, to_date=end, counter_id=counter_id
@@ -116,7 +140,7 @@ def item_sales(
 ) -> dict[str, Any]:
     """Margin requires `catalog.cost.read` on top of this report's permission; the
     columns are **omitted** rather than nulled when it is absent."""
-    start, end = _date_range(None, from_date, to_date, clock.now().date())
+    start, end = _date_range(None, from_date, to_date, _today(clock, ctx))
     return _envelope(
         ReportService(session, clock).item_sales(
             ctx, from_date=start, to_date=end, include_margin=include_margin
@@ -133,7 +157,7 @@ def counter_reconciliation(
     counter_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Cash expected versus collected, per counter per day."""
-    on_date = report_date or clock.now().date()
+    on_date = report_date or _today(clock, ctx)
     return _envelope(
         ReportService(session, clock).counter_reconciliation(
             ctx, on_date=on_date, counter_id=counter_id
@@ -160,7 +184,7 @@ def export_report(
         raise ValidationFailed({"format": "Only `csv` is supported."})
 
     service = ReportService(session, clock)
-    start, end = _date_range(None, from_date, to_date, clock.now().date())
+    start, end = _date_range(None, from_date, to_date, _today(clock, ctx))
 
     if name == "daily-sales":
         report = service.daily_sales(ctx, from_date=start, to_date=end)

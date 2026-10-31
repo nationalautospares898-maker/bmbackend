@@ -466,3 +466,12 @@ Index(
 Index("ix_invoices__idempotency_key", Invoice.business_id, Invoice.idempotency_key)
 Index("ix_invoice_items__product", InvoiceItem.product_id, InvoiceItem.invoice_id)
 Index("ix_print_log__invoice", PrintLog.invoice_id, PrintLog.printed_at.desc())
+#: Migration `0017` gave this child table its own `business_id` so a tenant-scoped scan
+#: does not need the parent join, and indexed it alongside the parent key it is filtered
+#: with. Mirrored into metadata so autogenerate cannot propose dropping it — see the note
+#: in `catalog.py`.
+Index(
+    "ix_draft_bill_items__business",
+    DraftBillItem.business_id,
+    DraftBillItem.draft_bill_id,
+)

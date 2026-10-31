@@ -28,7 +28,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from bm.domain.auth.permissions import Permission
-from bm.domain.shared.clock import Clock
+from bm.domain.shared.clock import Clock, business_date
 from bm.domain.shared.context import AuthContext
 from bm.domain.shared.errors import ValidationFailed
 
@@ -223,7 +223,11 @@ class ReportService:
     def credit_outstanding(self, ctx: AuthContext) -> ReportEnvelope:
         """The other view of the same dataset. Must reconcile with `daily_sales`."""
         ctx.require(Permission.CREDIT_READ)
-        today = self._clock.now().date()
+        # Business-local, because `due_date` is a business-local `DATE` (T3-02). With the
+        # UTC date here, this report's `overdue` total disagreed with the ageing buckets
+        # in `CreditService` for the first 5½ hours of every Asia/Kolkata day — two
+        # views of the same rows, reconciling only after 05:30.
+        today = business_date(self._clock.now(), self._business_timezone(ctx.business_id))
 
         row = self._session.execute(
             text(

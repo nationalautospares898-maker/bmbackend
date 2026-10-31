@@ -372,3 +372,8 @@ Index(
     Notification.created_at.desc(),
     postgresql_where=text("read_at IS NULL"),
 )
+#: The `0017` child-table tenancy index. See the note in `catalog.py`.
+Index("ix_import_rows__business", ImportRow.business_id, ImportRow.import_job_id)
+#: Migration `0020`'s uniqueness guarantee for the monotonic upload ordinal: "newest
+#: first" is only a guarantee if no two jobs in one business can share an ordinal.
+Index("ix_import_jobs__ordinal", ImportJob.business_id, ImportJob.ordinal, unique=True)

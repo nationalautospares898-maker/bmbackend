@@ -467,6 +467,44 @@ class SyncService:
             "warnings": warnings,
         }
 
+    def _resolve_counter(self, ctx: AuthContext) -> dict[str, Any] | None:
+        """The counter this request is working at, **scoped to the caller's business**.
+
+        `ctx.counter_id` is already resolved for us by `AuthService.resolve_context`,
+        which takes the first of `X-Counter-Id`, the token's claim, and the registered
+        device's own `counter_id`. So a provisioned counter PC needs no header: the
+        device knows which till it is.
+
+        The tenant scope is the fix here. `X-Counter-Id` is **caller-supplied** and
+        `resolve_context` does not check that it belongs to the caller's business, while
+        this lookup used to be `WHERE id = :id` with no filter at all. An authenticated
+        user of one shop could therefore send another shop's counter id and read back
+        that counter's **code and name** — a cross-tenant disclosure of exactly the kind
+        `SECURITY.md §3.2` and AC-8 exist to prevent. Narrow, because only two fields
+        leak, but a leak is a leak, and it is the sort that grows the next time a field
+        is added to this payload.
+
+        Scoped, a foreign or unknown id is simply absent (§4.1) — never a 403, which
+        would confirm that it exists.
+        """
+        if ctx.counter_id is None:
+            return None
+        row = self._session.execute(
+            text(
+                "SELECT code, name, max_open_drafts FROM counters"
+                " WHERE id = :id AND business_id = :business_id"
+            ),
+            {"id": ctx.counter_id, "business_id": ctx.business_id},
+        ).first()
+        if row is None:
+            return None
+        return {
+            "id": str(ctx.counter_id),
+            "code": row.code,
+            "name": row.name,
+            "max_open_drafts": row.max_open_drafts,
+        }
+
     def bootstrap(self, ctx: AuthContext) -> dict[str, Any]:
         """One call after login (`API-SPECIFICATION.md §3.12`).
 
@@ -487,19 +525,7 @@ class SyncService:
             if SPECS[key].client_visible
         }
 
-        counter = None
-        if ctx.counter_id is not None:
-            row = self._session.execute(
-                text("SELECT code, name, max_open_drafts FROM counters WHERE id = :id"),
-                {"id": ctx.counter_id},
-            ).first()
-            if row is not None:
-                counter = {
-                    "id": str(ctx.counter_id),
-                    "code": row.code,
-                    "name": row.name,
-                    "max_open_drafts": row.max_open_drafts,
-                }
+        counter = self._resolve_counter(ctx)
 
         return {
             "business_id": str(ctx.business_id),

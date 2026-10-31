@@ -373,3 +373,11 @@ Index("ix_payment_allocations__invoice", PaymentAllocation.invoice_id)
 Index("ix_credit_notes__customer", CreditNote.customer_id, CreditNote.issued_at.desc())
 Index("ix_purchases__supplier_time", Purchase.supplier_id, Purchase.received_at.desc())
 Index("ix_sales_returns__invoice", SalesReturn.invoice_id)
+#: The two `0017` child-table tenancy indexes on this module's tables. See the note in
+#: `catalog.py` for why they are mirrored into metadata.
+Index("ix_purchase_items__business", PurchaseItem.business_id, PurchaseItem.purchase_id)
+Index(
+    "ix_sales_return_items__business",
+    SalesReturnItem.business_id,
+    SalesReturnItem.sales_return_id,
+)

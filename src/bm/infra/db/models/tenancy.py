@@ -132,7 +132,22 @@ class Counter(Base):
     #: Optional per-counter invoice series — the documented escalation path if the
     #: single series row ever becomes a contention point (`ARCHITECTURE.md §5.4`).
     #: Must not be used without re-checking OD-25 first.
-    invoice_series_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    #:
+    #: The foreign key is named explicitly because it is **added later**, by migration
+    #: `0010`: `counters` is created in `0002`, before `invoice_series` exists, so the
+    #: constraint cannot be declared at table-creation time. It was missing from this
+    #: model until the 30 October 2026 audit, which is why `alembic check` proposed
+    #: dropping it — autogenerate compares against metadata, and metadata did not know
+    #: the constraint existed.
+    invoice_series_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "invoice_series.id",
+            ondelete="SET NULL",
+            name="fk_counters__invoice_series",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
 
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = created_at_column()

@@ -76,7 +76,8 @@ _MATCH_KIND_SQL = """
     END
 """
 
-#: Ranked search, as a union of **one indexable branch per tier**.
+#: Ranked search, as a union of **one indexable branch per tier**, ranked and truncated
+#: **before** the row detail is joined on.
 #:
 #: Why it is shaped this way rather than as one `WHERE … OR … OR …`
 #: ----------------------------------------------------------------
@@ -99,36 +100,120 @@ _MATCH_KIND_SQL = """
 #:
 #: As a union, each branch is a separate query the planner can satisfy from one index:
 #: equality and prefix branches from the btree `text_pattern_ops` indexes, the fuzzy
-#: branch from the GIN trigram index. The row detail is then fetched **once**, for the
-#: few hundred candidate ids, instead of for every product in the catalogue.
+#: branch from the GIN trigram index.
+#:
+#: Why the ranking and the `LIMIT` come *before* the five detail joins
+#: ------------------------------------------------------------------
+#:
+#: Making the tiers indexable fixed the scan but left a second, larger cost in place, and
+#: the 30 October 2026 audit measured it: **single-thread p95 347 ms against the same
+#: 150 ms budget**. The union was cheap; what was expensive was what happened to its
+#: output.
+#:
+#: A broad but perfectly legitimate query matches a large fraction of the catalogue —
+#: `normalized_name LIKE 'oil filter%'` matches 10 000 of the seeded 100 000, and the
+#: trigram branch matches another 10 000. The old query joined `products`, `units`,
+#: `brands`, `categories` and `inventory_balances` onto **every one of those candidate
+#: rows**, and only then sorted and applied `LIMIT`. Measured with
+#: `EXPLAIN (ANALYZE, BUFFERS)` for `'clutch pl'`:
+#:
+#: * candidate branches: 20 000 rows, 36 ms, 5 248 buffers — the indexes doing their job;
+#: * `products_pkey` index scan **loops=10000**, 40 000 buffers;
+#: * `units_pkey` **loops=10000**, 20 000 buffers; `brands_pkey` and `categories_pkey`
+#:   likewise; `inventory_balances` **loops=10000**, 30 001 buffers;
+#: * `Limit → Sort (top-N heapsort)` then discarded all but 500 rows.
+#:
+#: 95 249 buffer hits and 108 ms to return 500 rows, of which roughly 90 000 hits were
+#: spent decorating rows that the `LIMIT` immediately threw away.
+#:
+#: So the ordering key is computed where it is cheap and the detail is fetched where it is
+#: needed. `sales_rank` and `normalized_name` are carried up out of the candidate branches
+#: (the branches are already reading those heap rows, so selecting two more columns is
+#: free), `best` ranks and truncates on them, and the five joins then run for at most
+#: `SEARCH_ROW_CAP` rows instead of for every match.
+#:
+#: Two further bounds, both of which preserve the result exactly:
+#:
+#: * **Each branch is itself `LIMIT :row_cap`**, ordered by the same tie-break the final
+#:   ordering uses. This is exact, not an approximation: a tier's score is fixed, so if a
+#:   product is outside its own tier's best `row_cap` by `(sales_rank DESC,
+#:   normalized_name, id)`, then `row_cap` products from that same tier — each with a
+#:   final score at least as high, because `max()` can only raise it — already precede
+#:   it, and it therefore cannot be in the overall best `row_cap` either. The fuzzy
+#:   branch orders by its own varying score first, and the same argument applies.
+#: * **`is_active` is filtered inside each branch** rather than after the union. With the
+#:   per-branch `LIMIT` in place this is required for correctness, not an optimisation: an
+#:   inactive row must not consume a slot that an active row would otherwise have taken.
+#:   The resulting set is identical to filtering afterwards.
+#:
+#: Why `id` is the last ordering column
+#: ------------------------------------
+#:
+#: `(score, sales_rank, normalized_name)` is **not** a total order, and on a real
+#: catalogue it is nowhere near one: a shop stocks the same part for eight makes under
+#: forty name stems, so the 100 000-product catalogue resolves the `'air'` name-prefix
+#: tier's 10 000 rows into only 1 983 distinct ordering keys — tie groups averaging five
+#: rows and reaching thirteen. Without a final discriminator the order *within* a tie
+#: group was whatever the plan happened to emit, so the comment in `search()` promising a
+#: list "stable between keystrokes" was not true: a plan flip or a `VACUUM` could reorder
+#: it, and the per-branch `LIMIT` above would be free to choose a different five of a
+#: thirteen-row tie each time.
+#:
+#: `id` is appended to every ordering clause here, and to the service's own sort, so the
+#: order is total and the answer is deterministic. This does not change the documented
+#: ranking — score, then sales frequency, then name, exactly as `ARCHITECTURE.md §8`
+#: states — it only fixes which of two genuinely indistinguishable rows comes first, and
+#: it is what makes the per-branch `LIMIT` provably exact rather than merely usually
+#: right.
 #:
 #: The scores and `match_kind` values are unchanged from `_RANK_SQL` / `_MATCH_KIND_SQL`
-#: above, which still document the tiers; `GREATEST`-by-id picks the best tier a product
-#: matched, exactly as `DISTINCT ON … ORDER BY score DESC` did. The M5 catalog suite is
-#: what proves the behaviour is identical — it was written against the old query and
-#: passes unchanged against this one.
+#: above, which still document the tiers. Two suites hold that claim up:
+#:
+#: * `tests/api/test_catalog_search.py` asserts the tier ordering, the alias collapse,
+#:   the `include_inactive` rule, tenant isolation and the limit clamp directly. It is
+#:   new — the audit found the ranking had **no** test coverage, which is why a claim
+#:   that used to live here, that an "M5 catalog suite" proved the behaviour, was false.
+#: * `tests/load/test_search_equivalence.py` asserts, on the 100 000-product catalogue,
+#:   that this query returns the same ids, scores and `match_kind`s **in the same order**
+#:   as the pre-optimisation query it replaced, for every documented query shape.
 SEARCH_SQL = text(
     """
     WITH candidates AS (
         -- exact part code (100)
-        SELECT id AS product_id, 100 AS score, 'exact_sku' AS match_kind
-          FROM products
-         WHERE business_id = :business_id AND normalized_sku = :exact
+        (SELECT id AS product_id, 100 AS score, 'exact_sku' AS match_kind,
+                sales_rank, normalized_name
+           FROM products
+          WHERE business_id = :business_id AND normalized_sku = :exact
+            AND (:include_inactive OR is_active)
+          ORDER BY sales_rank DESC, normalized_name, id
+          LIMIT :row_cap)
         UNION ALL
         -- part-code prefix (80)
-        SELECT id, 80, 'sku_prefix'
-          FROM products
-         WHERE business_id = :business_id AND normalized_sku LIKE :prefix_sku
+        (SELECT id, 80, 'sku_prefix', sales_rank, normalized_name
+           FROM products
+          WHERE business_id = :business_id AND normalized_sku LIKE :prefix_sku
+            AND (:include_inactive OR is_active)
+          ORDER BY sales_rank DESC, normalized_name, id
+          LIMIT :row_cap)
         UNION ALL
         -- name prefix (60)
-        SELECT id, 60, 'name_prefix'
-          FROM products
-         WHERE business_id = :business_id AND normalized_name LIKE :prefix_name
+        (SELECT id, 60, 'name_prefix', sales_rank, normalized_name
+           FROM products
+          WHERE business_id = :business_id AND normalized_name LIKE :prefix_name
+            AND (:include_inactive OR is_active)
+          ORDER BY sales_rank DESC, normalized_name, id
+          LIMIT :row_cap)
         UNION ALL
-        -- alias prefix (50)
-        SELECT a.product_id, 50, 'alias_prefix'
-          FROM product_aliases a
-         WHERE a.business_id = :business_id AND a.normalized_alias LIKE :prefix_sku
+        -- alias prefix (50). This branch joins `products` because the tie-break and the
+        -- `is_active` filter live there; `product_aliases` is a small table and the join
+        -- is on its primary key.
+        (SELECT a.product_id, 50, 'alias_prefix', p.sales_rank, p.normalized_name
+           FROM product_aliases a
+           JOIN products p ON p.id = a.product_id
+          WHERE a.business_id = :business_id AND a.normalized_alias LIKE :prefix_sku
+            AND (:include_inactive OR p.is_active)
+          ORDER BY p.sales_rank DESC, p.normalized_name, p.id
+          LIMIT :row_cap)
         UNION ALL
         -- contains / trigram (similarity * 40, so always below the tiers above).
         --
@@ -144,20 +229,33 @@ SEARCH_SQL = text(
         --   A cashier typing two characters wants the part codes that *start* that
         --   way, which the prefix tiers already return from the first character
         --   (FR-CAT-003) — not every product that happens to contain the letters.
-        SELECT id, (similarity(search_text, :raw) * 40)::int, 'fuzzy'
-          FROM products
-         WHERE :fuzzy_enabled
-           AND business_id = :business_id
-           AND (search_text LIKE :contains OR search_text % :raw)
+        (SELECT id, (similarity(search_text, :raw) * 40)::int, 'fuzzy',
+                sales_rank, normalized_name
+           FROM products
+          WHERE :fuzzy_enabled
+            AND business_id = :business_id
+            AND (search_text LIKE :contains OR search_text % :raw)
+            AND (:include_inactive OR is_active)
+          ORDER BY (similarity(search_text, :raw) * 40)::int DESC,
+                   sales_rank DESC, normalized_name, id
+          LIMIT :row_cap)
     ),
     best AS (
         SELECT product_id,
                max(score) AS score,
                -- The kind belonging to the winning score. `DISTINCT ON` cannot be used
                -- here because the aggregate is what selects the row.
-               (ARRAY_AGG(match_kind ORDER BY score DESC))[1] AS match_kind
+               (ARRAY_AGG(match_kind ORDER BY score DESC))[1] AS match_kind,
+               -- Both are functionally dependent on `product_id`, so the aggregate
+               -- returns that product's own value; they are aggregated only because
+               -- `GROUP BY product_id` requires it. Carrying them here is what lets the
+               -- ranking happen before the detail joins.
+               max(sales_rank) AS sales_rank,
+               min(normalized_name) AS normalized_name
           FROM candidates
          GROUP BY product_id
+         ORDER BY 2 DESC, 4 DESC, 5, 1
+         LIMIT :row_cap
     )
     SELECT p.id, p.name, p.sku, p.barcode, p.default_selling_price, p.last_cost_price,
            p.reorder_level, p.hsn_code, p.tax_group_id, p.is_active,
@@ -166,7 +264,7 @@ SEARCH_SQL = text(
            ib.quantity AS branch_quantity,
            best.score AS score,
            best.match_kind AS match_kind,
-           p.sales_rank, p.normalized_name
+           best.sales_rank, best.normalized_name
       FROM best
       JOIN products p ON p.id = best.product_id
       JOIN units u ON u.id = p.unit_id
@@ -174,9 +272,7 @@ SEARCH_SQL = text(
       LEFT JOIN categories c ON c.id = p.category_id
       LEFT JOIN inventory_balances ib
              ON ib.product_id = p.id AND ib.branch_id = :branch_id
-     WHERE (:include_inactive OR p.is_active)
-     ORDER BY best.score DESC, p.sales_rank DESC, p.normalized_name
-     LIMIT :row_cap
+     ORDER BY best.score DESC, best.sales_rank DESC, best.normalized_name, p.id
     """
 )
 
@@ -429,8 +525,8 @@ class CatalogRepository:
     ) -> list[ProductRow]:
         """Ranked search. One query, no N+1.
 
-        `DISTINCT ON (p.id)` collapses the alias join so a product with five matching
-        aliases appears once, at its best score.
+        `GROUP BY product_id` in `best` collapses the tiers so a product matching on
+        five aliases appears once, at its best score.
         """
         rows = self._session.execute(
             SEARCH_SQL,
@@ -471,15 +567,20 @@ class CatalogRepository:
             )
             for r in rows
         ]
-        # Final ordering is applied here rather than in SQL because `DISTINCT ON`
-        # requires its own leading ORDER BY. Ties break on sales frequency then name,
-        # so the list a cashier sees is stable between keystrokes.
+        # The SQL already returns the rows in this order; re-applying the key here is
+        # what makes the ordering a property of *this* function rather than of the
+        # query's shape, so a future change to the query cannot silently reorder the
+        # list a cashier sees. Ties break on sales frequency, then name, then id — the
+        # id last so the order is *total*, which is what actually makes the list stable
+        # between keystrokes. See the note on `SEARCH_SQL`: without it, a tie group of
+        # five or more rows was ordered by whatever the plan emitted.
         by_rank = {r.id: (r.sales_rank, r.normalized_name) for r in rows}
         results.sort(
             key=lambda p: (
                 -(p.match_score or 0),
                 -by_rank[p.id][0],
                 by_rank[p.id][1],
+                p.id,
             )
         )
         return results[:limit]

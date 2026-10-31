@@ -22,6 +22,7 @@ from bm.domain.shared.money import (
     amount_in_words,
     assert_client_total_matches,
     assert_integral_amount,
+    assert_not_negative,
     assert_scale_within,
     compute_invoice_totals,
     compute_line,
@@ -496,3 +497,126 @@ def test_is_integral_helper() -> None:
     assert is_integral(D("5")) is True
     assert is_integral(D("5.00")) is True
     assert is_integral(D("5.01")) is False
+
+
+# --- branches the audit found uncovered ---------------------------------------
+#
+# The 30 October 2026 audit measured this module at 92.5% branch coverage against a
+# promised 95% floor. These are the branches that were missing, and each one is a rule
+# rather than a line: a non-finite input, the alternative rounding mode, the tax
+# whole-rupee refusal, the storable-precision guard and the negative amount-in-words.
+#
+# `money.py` is the one file where an untested branch is a wrong number on a customer's
+# bill, so each test below asserts the *outcome* — a refusal, or a specific figure — and
+# not merely that the code ran.
+
+
+@pytest.mark.parametrize("raw", ["Infinity", "-Infinity", "NaN", "inf", "-inf", "nan"])
+def test_a_non_finite_string_is_refused_before_it_is_parsed(raw: str) -> None:
+    """Caught by the `inf`/`nan` text guard, with the exponent-notation message."""
+    with pytest.raises(ValidationFailed) as caught:
+        parse_decimal(raw, field_name="amount")
+    assert "non-finite" in caught.value.details["fields"]["amount"].lower()
+
+
+@pytest.mark.parametrize("raw", [D("Infinity"), D("-Infinity"), D("NaN")])
+def test_a_non_finite_decimal_object_is_refused(raw: Decimal) -> None:
+    """The *other* way a non-finite value arrives, and the one the text guard misses.
+
+    A `Decimal` is taken as-is — it cannot have lost precision — so the `is_finite`
+    check is the only thing standing between `Decimal("Infinity")` and a bill total.
+    It matters because `NaN` compares false against every bound, so neither the scale
+    check nor the non-negative check would refuse it.
+    """
+    with pytest.raises(ValidationFailed) as caught:
+        parse_decimal(raw, field_name="amount")
+    assert "finite" in caught.value.details["fields"]["amount"].lower()
+
+
+def test_exponent_notation_is_refused_because_its_precision_is_ambiguous() -> None:
+    """`1e3` is numerically 1000 but says nothing about how precise it is."""
+    for raw in ("1E+2", "1.25e2"):
+        with pytest.raises(ValidationFailed):
+            parse_decimal(raw, field_name="amount")
+
+
+def test_a_boolean_is_not_a_quantity_of_money() -> None:
+    """`bool` is a subclass of `int`, so without its own branch `True` would parse as
+    `Decimal(1)` and a JSON `true` would become one rupee."""
+    with pytest.raises(ValidationFailed) as caught:
+        parse_decimal(True, field_name="amount")
+    assert "decimal string" in caught.value.details["fields"]["amount"].lower()
+    with pytest.raises(ValidationFailed):
+        parse_decimal(False, field_name="amount")
+
+
+def test_a_negative_amount_is_refused_where_one_is_not_allowed() -> None:
+    """`assert_not_negative` guards prices, costs and reorder levels."""
+    with pytest.raises(ValidationFailed) as caught:
+        assert_not_negative(D("-0.01"), field_name="unit_price")
+    assert "negative" in caught.value.details["fields"]["unit_price"].lower()
+    # Zero is allowed: a free line is a business decision, not an error.
+    assert assert_not_negative(D("0"), field_name="unit_price") == D("0")
+
+
+#: The alternative rounding mode. Declared in `RoundingMode` and implemented, but not
+#: enabled in v1 — `DEFAULT_POLICY` is `REJECT_FRACTIONAL`. It is reachable only through
+#: an explicit policy, which is exactly why no test had covered it.
+HALF_UP_POLICY = MoneyPolicy(version=99, rounding_mode=RoundingMode.LINE_HALF_UP)
+
+
+def test_line_half_up_rounds_the_line_instead_of_refusing_it() -> None:
+    """Under `LINE_HALF_UP` a fractional line total is rounded, not rejected.
+
+    `REJECT_FRACTIONAL` refuses the same input (asserted below), so this pins the
+    difference between the two modes rather than the behaviour of one.
+    """
+    # 3 x 10.005 = 30.015 -> 30.02 at amount_scale 2.
+    totals = compute_line(_line("3.000", "10.0050"), HALF_UP_POLICY)
+    assert totals.line_total == D("30.02")
+    # And the discount absorbs the rounding, so gross - discount == net exactly.
+    assert totals.gross - totals.discount_total == totals.line_total
+
+
+def test_the_v1_policy_refuses_what_line_half_up_would_round() -> None:
+    """The same input, the other mode: refused rather than quietly adjusted."""
+    with pytest.raises(ValidationFailed):
+        compute_line(_line("3.000", "10.0050"), DEFAULT_POLICY)
+
+
+def test_line_half_up_rounds_tax_to_the_amount_scale() -> None:
+    """The tax half of the same branch. 100 x 2.5% = 2.50, exact; 100 x 2.555% is not."""
+    totals = compute_line(_line("1.000", "100.0000", tax_rate_percent="2.555"), HALF_UP_POLICY)
+    assert totals.tax_amount == D("2.56")
+
+
+def test_a_tax_amount_with_paise_is_refused_under_the_whole_rupee_rule() -> None:
+    """FR-TAX-003 with the v1 policy: tax is refused rather than rounded.
+
+    Reachable only once a tax rate is set, which v1 does not do by default — so this is
+    the branch that would have gone untested until the day GST was switched on.
+    """
+    with pytest.raises(ValidationFailed) as caught:
+        compute_line(_line("1.000", "100.0000", tax_rate_percent="2.500"), DEFAULT_POLICY)
+    assert "tax_amount" in str(caught.value.details["fields"])
+
+
+def test_a_whole_rupee_tax_amount_is_accepted() -> None:
+    """The other side of that branch, so the refusal above is not simply "tax fails"."""
+    totals = compute_line(_line("1.000", "100.0000", tax_rate_percent="5.000"), DEFAULT_POLICY)
+    assert totals.tax_amount == D("5")
+    assert totals.line_total == D("105")
+
+
+def test_amount_in_words_renders_a_negative_amount_as_minus() -> None:
+    """A credit note is a negative amount, and the helper is in the print contract.
+
+    The payload field exists; whether a template renders it is an owner decision
+    (OD-5). That does not make a wrong string acceptable.
+    """
+    assert amount_in_words(D("-1250")) == "Minus One Thousand Two Hundred Fifty Rupees Only"
+
+
+def test_amount_in_words_agrees_with_itself_either_side_of_zero() -> None:
+    positive = amount_in_words(D("342.50"))
+    assert amount_in_words(D("-342.50")) == f"Minus {positive}"

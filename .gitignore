@@ -37,13 +37,30 @@ venv/
 .coverage.*
 htmlcov/
 coverage.xml
+# `pytest --cov-report=json` output, read by scripts/check_coverage.py.
+coverage.json
 .tox/
 
 # --- Local storage and logs --------------------------------------------------
+#
+# These are **anchored with a leading slash** so they match only the directory at the
+# repository root, which is the one they are about.
+#
+# An unanchored `storage/` matches a directory of that name at *any* depth, and it did:
+# it silently excluded `src/bm/infra/storage/`, the object-store module that
+# `bm.api.v1.imports` and `bm.domain.imports.service` both import. The module was never
+# pushed, so a fresh clone of this repository could not import its own imports API
+# (`ModuleNotFoundError: No module named 'bm.infra.storage'`), `mypy src/` reported two
+# errors, and `pytest` could not even collect `tests/unit/test_upload_storage.py`.
+# Nothing in the working tree showed it — `git status` was clean, because an ignored file
+# is not untracked-and-reported, it is invisible.
+#
+# The same trap applies to each of the others, so all four are anchored rather than only
+# the one that had already sprung.
 *.log
-logs/
-storage/
-uploads/
+/logs/
+/storage/
+/uploads/
 *.sqlite3
 *.db
 
