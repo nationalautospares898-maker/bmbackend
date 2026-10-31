@@ -16,6 +16,7 @@ import os
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -55,13 +56,81 @@ os.environ.setdefault(
     "BM_DATABASE_URL", "postgresql+psycopg://bm_app:bm_app_local_only@localhost:55439/bm"
 )
 
+#: Database names this suite is allowed to touch.
+#:
+#: The suite **truncates every business table** between tests (`clean_db`), so the
+#: database it points at is destroyed by running it. That is fine for a scratch
+#: database and catastrophic for any other, and until this guard existed there was
+#: nothing keeping the two apart:
+#:
+#: `_load_dotenv()` above loads the developer's `.env`, which necessarily points
+#: `BM_DATABASE_URL` at the database the application uses — on a development machine,
+#: the one with their data in it. The `setdefault` below it then cannot help, because the
+#: value is already set. So a bare `uv run pytest` truncated the working database, which
+#: is exactly what happened on 31 October 2026: a demo tenant with its customers,
+#: invoices and stock was wiped an evening before it was needed, and there was no backup.
+#:
+#: Hence an allow-list on the database **name**, checked against the resolved URL rather
+#: than against an environment variable, and a refusal rather than a skip. A skip would
+#: report green.
+#: `bm_test`, `bm_migrations` and `bm_perf` are the three CI databases — the guard has to
+#: name them or it breaks the pipeline it is meant to protect. The rest are the scratch
+#: databases this project already accumulated locally.
+_ALLOWED_TEST_DATABASES = frozenset(
+    {
+        "bm_test",
+        "bm_migrations",
+        "bm_perf",
+        "bm_ci",
+        "bm_scratch",
+        "bm_fresh",
+        "bm_issue_tests",
+        "bm_drift",
+    }
+)
+
+
+def _database_name(url: str) -> str:
+    return urlsplit(url.replace("postgresql+psycopg://", "postgresql://")).path.lstrip("/")
+
+
+def _require_a_test_database(url: str) -> None:
+    """Refuse to run the truncating suite against anything but a scratch database."""
+    name = _database_name(url)
+    if name in _ALLOWED_TEST_DATABASES or name.endswith(("_test", "_ci", "_scratch")):
+        return
+    raise pytest.UsageError(
+        f"refusing to run the test suite against database {name!r}: this suite TRUNCATES "
+        "every business table between tests and would destroy its contents.\n\n"
+        "Point it at a scratch database explicitly, e.g.\n"
+        "    BM_TEST_DATABASE_URL=postgresql+psycopg://bm_app:bm_app_local_only"
+        "@localhost:55439/bm_test\n\n"
+        f"Allowed names: any of {sorted(_ALLOWED_TEST_DATABASES)}, or any name ending "
+        "_test / _ci / _scratch."
+    )
+
 
 def _app_database_url() -> str:
-    return os.environ["BM_DATABASE_URL"]
+    """The database the tests run against.
+
+    `BM_TEST_DATABASE_URL` is consulted **first and separately** from
+    `BM_DATABASE_URL`, so that pointing the application at a database is not the same
+    act as pointing the test suite at it. They were the same variable, and that is how
+    the application's database came to be the suite's default target.
+    """
+    url = os.environ.get("BM_TEST_DATABASE_URL") or os.environ["BM_DATABASE_URL"]
+    _require_a_test_database(url)
+    return url
 
 
 def _migration_database_url() -> str:
-    return os.environ.get("BM_MIGRATION_DATABASE_URL") or _app_database_url()
+    url = (
+        os.environ.get("BM_TEST_MIGRATION_DATABASE_URL")
+        or os.environ.get("BM_MIGRATION_DATABASE_URL")
+        or _app_database_url()
+    )
+    _require_a_test_database(url)
+    return url
 
 
 def _probe(url: str) -> str | None:
