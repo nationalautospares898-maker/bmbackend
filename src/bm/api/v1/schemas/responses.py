@@ -229,6 +229,14 @@ class InvoiceCustomerOut(Out):
 
 
 class InvoiceItemOut(Out):
+    #: The line's own id. `POST /returns` identifies a line to return by
+    #: `invoice_item_id`, so without this a return cannot be requested for a specific
+    #: line and no correction UI can exist.
+    id: uuid.UUID
+    #: The product this line sold, as opposed to the name it was sold under. Needed to
+    #: rebuild a cancelled bill as a new one — the sanctioned way to amend a finalised
+    #: sale (ADR-015) — since a new line has to reference the product, not its snapshot.
+    product_id: uuid.UUID
     line_no: int
     product_name_snapshot: str
     sku_snapshot: str | None
@@ -421,6 +429,12 @@ class BootstrapOut(Out):
     #: The client derives display times from this offset and never derives a business
     #: date of its own (FE-E-3).
     server_time: datetime
+    #: Today in the business's timezone. Published because FE-E-3 forbids the client
+    #: working it out, and without it the client had no way to honour that: a screen
+    #: defaulting a day filter to `new Date()` uses the browser's calendar date, which
+    #: on a counter PC set to UTC is yesterday's business date for the first five and a
+    #: half hours of every `Asia/Kolkata` day.
+    business_date: date
     catalog_cursor: str | None
 
 

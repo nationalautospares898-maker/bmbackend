@@ -23,6 +23,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -179,9 +180,19 @@ def test_the_invoice_list_filters_by_date_range(
     api_client: TestClient, headers: dict[str, str], tenant: Tenant, stocked: str
 ) -> None:
     """Daily Bills asks for one day. A date filter that did nothing would show the
-    owner every bill ever issued and call it today's takings."""
+    owner every bill ever issued and call it today's takings.
+
+    The dates are computed in the **business's** timezone, because that is the timezone
+    the server filters in — `(issued_at AT TIME ZONE :timezone)::date`. Asked in UTC
+    this test failed for five and a half hours of every day: between 18:30 and 24:00 UTC
+    the test tenant's `Asia/Kolkata` business is already on tomorrow, so a sale made then
+    has tomorrow's business date and is rightly absent from a filter for today-in-UTC.
+    Which financial day a sale belongs to is the server's decision (FE-E-3); a test that
+    decides it differently is testing a rule the system does not implement.
+    """
     _sale(api_client, headers, tenant, stocked)
-    today = datetime.now(UTC).date().isoformat()
+    business_today = datetime.now(ZoneInfo(tenant.timezone)).date()
+    today = business_today.isoformat()
 
     inside = api_client.get(
         "/api/v1/invoices", headers=headers, params={"from": today, "to": today}
@@ -190,7 +201,7 @@ def test_the_invoice_list_filters_by_date_range(
     assert inside.json()["items"]
 
     # A window that ended yesterday must be empty.
-    yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
+    yesterday = (business_today - timedelta(days=1)).isoformat()
     before = api_client.get(
         "/api/v1/invoices", headers=headers, params={"from": "2020-01-01", "to": yesterday}
     )

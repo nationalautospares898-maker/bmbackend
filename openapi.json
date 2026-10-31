@@ -305,6 +305,11 @@
             ],
             "title": "Branch Id"
           },
+          "business_date": {
+            "format": "date",
+            "title": "Business Date",
+            "type": "string"
+          },
           "business_id": {
             "format": "uuid",
             "title": "Business Id",
@@ -364,6 +369,7 @@
           "settings",
           "sync",
           "server_time",
+          "business_date",
           "catalog_cursor"
         ],
         "title": "BootstrapOut",
@@ -2603,12 +2609,22 @@
             "title": "Discount Amount",
             "type": "string"
           },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
           "line_no": {
             "title": "Line No",
             "type": "integer"
           },
           "line_total": {
             "title": "Line Total",
+            "type": "string"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
             "type": "string"
           },
           "product_name_snapshot": {
@@ -2663,6 +2679,8 @@
           }
         },
         "required": [
+          "id",
+          "product_id",
           "line_no",
           "product_name_snapshot",
           "sku_snapshot",

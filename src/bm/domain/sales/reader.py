@@ -26,6 +26,18 @@ from bm.infra.db.models.sales import Invoice, InvoiceItem
 
 @dataclass(frozen=True, slots=True)
 class InvoiceItemRecord:
+    #: The line's own id, and the product it sold.
+    #:
+    #: Both are needed by any **correction** workflow and neither was exposed, which is
+    #: why no correction UI could exist: `POST /returns` takes an `invoice_item_id` per
+    #: line, and rebuilding a cancelled bill as a new one needs the `product_id` to add
+    #: the line again. The snapshots are what the bill *said*; these are what it
+    #: *referred to*, and a correction has to act on the latter.
+    #:
+    #: Exposing them discloses nothing new — a product id is already returned by search
+    #: and the catalogue — and the snapshots remain the authority for what was printed.
+    id: uuid.UUID
+    product_id: uuid.UUID
     line_no: int
     product_name_snapshot: str
     sku_snapshot: str | None
@@ -171,6 +183,8 @@ class InvoiceReader:
             cancellation_reason=invoice.cancellation_reason,
             items=tuple(
                 InvoiceItemRecord(
+                    id=i.id,
+                    product_id=i.product_id,
                     line_no=i.line_no,
                     product_name_snapshot=i.product_name_snapshot,
                     sku_snapshot=i.sku_snapshot,
@@ -200,6 +214,8 @@ class InvoiceReader:
         )
         return tuple(
             InvoiceItemRecord(
+                id=i.id,
+                product_id=i.product_id,
                 line_no=i.line_no,
                 product_name_snapshot=i.product_name_snapshot,
                 sku_snapshot=i.sku_snapshot,

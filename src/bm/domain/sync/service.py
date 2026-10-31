@@ -28,7 +28,7 @@ from typing import Any
 from sqlalchemy import insert, select, text
 from sqlalchemy.orm import Session
 
-from bm.domain.shared.clock import Clock
+from bm.domain.shared.clock import Clock, business_date
 from bm.domain.shared.context import AuthContext
 from bm.domain.shared.errors import (
     DomainError,
@@ -542,5 +542,15 @@ class SyncService:
                 "max_batch_size": MAX_BATCH_SIZE,
             },
             "server_time": self._clock.now().isoformat(),
+            # Today, in the **business's** timezone, so the client never has to work it
+            # out. `server_time` alone is not enough: converting it needs the shop's
+            # timezone, which the client is not told, so Daily Bills defaulted its day
+            # filter to `new Date()` — the *browser's* calendar date. A counter PC set to
+            # UTC therefore asked for yesterday's business date for the first five and a
+            # half hours of every `Asia/Kolkata` day and showed an empty list, which is
+            # the same defect `reports._today` documents on the server side and the same
+            # rule FE-E-3 states: the client must not derive a business date. Now it does
+            # not have to.
+            "business_date": business_date(self._clock.now(), ctx.business_timezone).isoformat(),
             "catalog_cursor": None,
         }

@@ -53,6 +53,13 @@ def invoice_dict(record: InvoiceRecord, *, may_see_cost: bool) -> dict[str, Any]
         },
         "items": [
             {
+                # The line and the product it sold. Needed by a correction: `POST
+                # /returns` identifies a line by `invoice_item_id`, and rebuilding a
+                # cancelled bill needs the `product_id` to add the line again. Without
+                # these two fields no correction workflow can address a line at all,
+                # which is why none existed.
+                "id": str(item.id),
+                "product_id": str(item.product_id),
                 "line_no": item.line_no,
                 "product_name_snapshot": item.product_name_snapshot,
                 "sku_snapshot": item.sku_snapshot,
