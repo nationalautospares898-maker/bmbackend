@@ -7651,6 +7651,119 @@
         ]
       }
     },
+    "/api/v1/customers": {
+      "get": {
+        "description": "The customer directory, newest first.\n\nAdded because there was no way to list customers at all. `GET /customers/search`\nneeds a term, and the only other read-many is `GET /credit/customers`, which\ninner-joins credit invoices — it answers \"who owes us money\" and is the top of the\nCredit Bills view. The Customers screen was reading from it, so a customer with no\ncredit invoice could not be seen or found there, and one created through\n`Add a customer` appeared to vanish.\n\nDeclared before `/{customer_id}` because FastAPI matches in declaration order and\n`\"\"` would otherwise be swallowed by the path-parameter route.\n\n`cursor` is opaque: the previous page's last `created_at` as epoch microseconds.\nDeliberately **not** ISO-8601 — an ISO timestamp with an offset contains a `+`, which\na query string decodes as a space, so a caller who pasted `next_cursor` straight into\na URL got a 422. Microseconds match PostgreSQL's `timestamptz` precision, sort as an\ninteger, and need no escaping.\n\nKeyset, not offset: a directory that grows while someone pages through it must not\nskip or repeat a row.",
+        "operationId": "list_customers_api_v1_customers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Customers Api V1 Customers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Customers",
+        "tags": [
+          "customers"
+        ]
+      }
+    },
     "/api/v1/customers/check-duplicates": {
       "post": {
         "description": "Surfaces candidates for a person to choose between. **Never merges.**",

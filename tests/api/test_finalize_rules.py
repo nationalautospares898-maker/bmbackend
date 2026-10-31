@@ -861,3 +861,83 @@ def test_a_takeover_needs_a_counter_to_take_the_draft_to(
     )
     with pytest.raises(ValidationFailed):
         service.takeover(no_counter, draft_id)
+
+
+# --- the draft must already be on the server (the NOT_FOUND defect) -----------
+
+
+def test_finalising_a_draft_the_server_has_never_seen_is_a_not_found(
+    api_client: TestClient,
+    headers: dict[str, str],
+    tenant: Tenant,
+    stocked: str,
+) -> None:
+    """The server half of a defect found in a real browser, not by this suite.
+
+    A cashier typed a bill and pressed `Print Bill`, and got "This bill is not
+    confirmed" with three failed attempts and `NOT_FOUND`. The cause was on the client —
+    nothing pushed a draft to the server except the `Save a Draft` button, so the
+    ordinary way to use the billing screen sent a `draft_id` the server had never heard
+    of.
+
+    This pins the server's side of that contract, which is **correct and deliberate**:
+    `draft_id` and `draft_version` exist for optimistic concurrency against a shared
+    draft (`API-SPECIFICATION.md §6`: "`draft_version` must match the server's draft"),
+    and silently inventing a draft row to satisfy a stale client would throw that away.
+    So the refusal stays, and the client pushes first.
+
+    Asserted here so that if someone later "fixes" this by making the server tolerant,
+    they have to delete a test that says why it is not tolerant.
+    """
+    body = _body(tenant, stocked)
+    body["draft_id"] = str(uuid.uuid4())
+    body["draft_version"] = 1
+
+    response = _post(api_client, headers, body)
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_the_refused_finalisation_creates_nothing_at_all(
+    api_client: TestClient,
+    headers: dict[str, str],
+    tenant: Tenant,
+    stocked: str,
+    migration_session: Session,
+) -> None:
+    """The reassurance the cashier actually needs: a refusal is not a half-sale.
+
+    Checked against the real tables rather than inferred from the status code, because
+    "the bill is not confirmed" is exactly the moment someone needs to know whether
+    stock moved. Nothing may be created — no invoice, no stock movement, and no
+    idempotency row that would make a corrected retry look like a replay.
+    """
+    before_invoices = migration_session.execute(text("SELECT count(*) FROM invoices")).scalar_one()
+    before_movements = migration_session.execute(
+        text("SELECT count(*) FROM stock_movements")
+    ).scalar_one()
+    stock_before = migration_session.execute(
+        text("SELECT quantity FROM inventory_balances WHERE product_id = :p"),
+        {"p": stocked},
+    ).scalar_one()
+
+    body = _body(tenant, stocked)
+    body["draft_id"] = str(uuid.uuid4())
+    assert _post(api_client, headers, body).status_code == 404
+
+    migration_session.commit()
+    assert (
+        migration_session.execute(text("SELECT count(*) FROM invoices")).scalar_one()
+        == before_invoices
+    )
+    assert (
+        migration_session.execute(text("SELECT count(*) FROM stock_movements")).scalar_one()
+        == before_movements
+    )
+    assert (
+        migration_session.execute(
+            text("SELECT quantity FROM inventory_balances WHERE product_id = :p"),
+            {"p": stocked},
+        ).scalar_one()
+        == stock_before
+    )

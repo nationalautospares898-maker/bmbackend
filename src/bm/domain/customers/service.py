@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import func, insert, select, text, update
@@ -55,6 +55,9 @@ class CustomerView:
     #: Present only with `credit.read`.
     outstanding: Decimal | None = None
     oldest_due_date: date | None = None
+    #: The directory's keyset paging cursor. Not published in the response body except
+    #: as an opaque `next_cursor`.
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +131,63 @@ class CustomerService:
 
         return [self._view(ctx, cid) for cid in ids]
 
+    def list_recent(
+        self, ctx: AuthContext, *, limit: int = 50, before: datetime | None = None
+    ) -> tuple[list[CustomerView], bool]:
+        """The customer directory, newest first. Returns `(views, has_more)`.
+
+        Why this exists
+        ---------------
+        There was no way to list customers. `search` needs a term, and the only other
+        read-many was `GET /credit/customers`, which **inner-joins credit invoices** —
+        it answers "who owes us money", which is the Credit Bills view. The Customers
+        screen was reading from it, so a customer with no credit invoice was invisible
+        there and could not be found by searching either. A customer created through
+        `Add a customer` therefore appeared to vanish, which is exactly what was
+        reported from the browser.
+
+        Newest first, because the customer you just added is the one you are looking
+        for. Keyset paging on `(created_at, id)` rather than `OFFSET`: a directory that
+        grows while you page through it must not skip or repeat a row, and `id` breaks
+        the tie so the order is total.
+
+        Inactive customers are excluded, matching `search`. Deactivation is the only
+        delete (FR-CUST-011), so including them would surface records the shop has
+        deliberately retired.
+        """
+        if not (ctx.has(Permission.CUSTOMER_MANAGE) or ctx.has(Permission.CREDIT_READ)):
+            ctx.require(Permission.CUSTOMER_MANAGE)
+
+        effective = min(limit or 50, MAX_SEARCH_LIMIT)
+        # One more than asked for, so `has_more` is known without a second count query.
+        rows = (
+            self._session.execute(
+                text(
+                    """
+                SELECT c.id
+                  FROM customers c
+                 WHERE c.business_id = :business_id
+                   AND c.is_active
+                   -- Cast both uses: with `before` NULL, PostgreSQL cannot infer
+                   -- the parameter's type and refuses with AmbiguousParameter.
+                   AND (CAST(:before AS timestamptz) IS NULL
+                        OR c.created_at < CAST(:before AS timestamptz))
+                 ORDER BY c.created_at DESC, c.id DESC
+                 LIMIT :limit
+                """
+                ),
+                {
+                    "business_id": ctx.business_id,
+                    "before": before,
+                    "limit": effective + 1,
+                },
+            )
+            .scalars()
+            .all()
+        )
+        has_more = len(rows) > effective
+        return [self._view(ctx, cid) for cid in rows[:effective]], has_more
+
     def get(self, ctx: AuthContext, customer_id: uuid.UUID) -> CustomerView:
         if not (ctx.has(Permission.CUSTOMER_MANAGE) or ctx.has(Permission.CREDIT_READ)):
             ctx.require(Permission.CUSTOMER_MANAGE)
@@ -195,6 +255,7 @@ class CustomerService:
             is_active=row.is_active,
             outstanding=outstanding,
             oldest_due_date=oldest,
+            created_at=row.created_at,
         )
 
     def exists(self, business_id: uuid.UUID, customer_id: uuid.UUID) -> bool:

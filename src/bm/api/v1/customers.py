@@ -11,6 +11,7 @@ likely matches; the system **never** auto-merges (FR-CUST-004).
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
@@ -20,6 +21,7 @@ from bm.api.deps import CurrentContext, ReadSession, WriteSession, require, requ
 from bm.api.v1.schemas.common import MoneyStr, StrictModel
 from bm.domain.auth.permissions import Permission
 from bm.domain.customers.service import CustomerService, CustomerView
+from bm.domain.shared.errors import ValidationFailed
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
@@ -62,6 +64,57 @@ def _customer_dict(view: CustomerView, *, include_credit: bool) -> dict[str, Any
             "oldest_due_date": (view.oldest_due_date.isoformat() if view.oldest_due_date else None),
         }
     return payload
+
+
+@router.get("")
+def list_customers(
+    session: ReadSession,
+    ctx: Annotated[
+        CurrentContext,
+        Depends(require_any(Permission.CUSTOMER_MANAGE, Permission.CREDIT_READ)),
+    ],
+    limit: Annotated[int, Query(ge=1, le=50)] = 50,
+    cursor: Annotated[str | None, Query(max_length=64)] = None,
+) -> dict[str, Any]:
+    """The customer directory, newest first.
+
+    Added because there was no way to list customers at all. `GET /customers/search`
+    needs a term, and the only other read-many is `GET /credit/customers`, which
+    inner-joins credit invoices — it answers "who owes us money" and is the top of the
+    Credit Bills view. The Customers screen was reading from it, so a customer with no
+    credit invoice could not be seen or found there, and one created through
+    `Add a customer` appeared to vanish.
+
+    Declared before `/{customer_id}` because FastAPI matches in declaration order and
+    `""` would otherwise be swallowed by the path-parameter route.
+
+    `cursor` is opaque: the previous page's last `created_at` as epoch microseconds.
+    Deliberately **not** ISO-8601 — an ISO timestamp with an offset contains a `+`, which
+    a query string decodes as a space, so a caller who pasted `next_cursor` straight into
+    a URL got a 422. Microseconds match PostgreSQL's `timestamptz` precision, sort as an
+    integer, and need no escaping.
+
+    Keyset, not offset: a directory that grows while someone pages through it must not
+    skip or repeat a row.
+    """
+    before = None
+    if cursor:
+        try:
+            before = datetime.fromtimestamp(int(cursor) / 1_000_000, tz=UTC)
+        except (ValueError, OverflowError, OSError) as exc:
+            raise ValidationFailed({"cursor": "Not a usable page marker."}) from exc
+
+    views, has_more = CustomerService(session).list_recent(ctx, limit=limit, before=before)
+    include_credit = ctx.has(Permission.CREDIT_READ)
+    last = views[-1].created_at if views and has_more else None
+    return {
+        "items": [_customer_dict(v, include_credit=include_credit) for v in views],
+        "page": {
+            "next_cursor": str(int(last.timestamp() * 1_000_000)) if last else None,
+            "has_more": has_more,
+            "limit": limit,
+        },
+    }
 
 
 @router.get("/search")
