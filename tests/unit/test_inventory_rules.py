@@ -18,7 +18,9 @@ quantity would be testing something the application cannot do.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from sqlalchemy import text
@@ -123,11 +125,39 @@ def product(migration_session: Session, tenant: Tenant) -> uuid.UUID:
     return product_id
 
 
-def _stock(service: InventoryService, tenant: Tenant, product_id: uuid.UUID, qty: str) -> None:
+def _ctx_without_a_branch(tenant: Tenant) -> AuthContext:
+    """A context with **no branch selected**, which is a legitimate state.
+
+    `AuthContext.branch_id` is `UUID | None`, and `requires_branch` exists precisely so a
+    branch-scoped operation can refuse one. The reads that narrow optionally rather than
+    refusing are the ones this exercises.
+    """
+    return AuthContext(
+        user_id=_USER_ID,
+        business_id=tenant.business_id,
+        branch_id=None,
+        counter_id=None,
+        device_id=_DEVICE_ID,
+        role=str(SystemRole.OWNER),
+        permissions=frozenset(str(p) for p in permissions_for_role(SystemRole.OWNER)),
+        token_id="inventory-rules-all-branches",
+        business_timezone=tenant.timezone,
+        full_name="Test",
+    )
+
+
+def _stock(
+    service: InventoryService,
+    tenant: Tenant,
+    product_id: uuid.UUID,
+    qty: str,
+    *,
+    branch_id: uuid.UUID | None = None,
+) -> uuid.UUID:
     """Put stock on the shelf through the only path that may: a movement."""
-    service.apply_movements(
+    created = service.apply_movements(
         _ctx(tenant),
-        branch_id=tenant.branch_id,
+        branch_id=branch_id or tenant.branch_id,
         movements=[
             MovementRequest(
                 product_id=product_id,
@@ -137,6 +167,117 @@ def _stock(service: InventoryService, tenant: Tenant, product_id: uuid.UUID, qty
                 source_id=product_id,
             )
         ],
+    )
+    return created[0]
+
+
+def _another_branch(session: Session, tenant: Tenant) -> uuid.UUID:
+    """A second branch of the **same** business, so "every branch" means more than one."""
+    branch_id = uuid.uuid4()
+    session.execute(
+        text(
+            "INSERT INTO branches (id, business_id, code, name)"
+            " VALUES (:id, :b, 'ANNEX', 'Annex Counter')"
+        ),
+        {"id": branch_id, "b": tenant.business_id},
+    )
+    session.commit()
+    return branch_id
+
+
+def _a_movement_in_another_business(session: Session) -> uuid.UUID:
+    """A movement belonging to a different shop entirely.
+
+    Without this the tenant assertions in the branch-less tests would be vacuously true —
+    there would be no foreign row that *could* leak.
+    """
+    from tests.fixtures import create_tenant
+
+    other = create_tenant(session, display_name="ANNEXE MOTORS", branch_code="AMX")
+    stranger = create_user(session, other, username="annexekeeper", role=SystemRole.OWNER)
+
+    unit_id = uuid.uuid4()
+    session.execute(
+        text(
+            "INSERT INTO units (id, business_id, code, name, allows_fraction, decimal_places)"
+            " VALUES (:id, :b, 'NOS', 'Numbers', false, 0)"
+        ),
+        {"id": unit_id, "b": other.business_id},
+    )
+    product_id = uuid.uuid4()
+    session.execute(
+        text(
+            "INSERT INTO products (id, business_id, name, normalized_name, unit_id,"
+            " default_selling_price, search_text, is_active)"
+            " VALUES (:id, :b, 'Clutch Plate', 'clutch plate', :u, 900, 'clutch plate', true)"
+        ),
+        {"id": product_id, "b": other.business_id, "u": unit_id},
+    )
+    session.commit()
+
+    stranger_ctx = AuthContext(
+        user_id=stranger.id,
+        business_id=other.business_id,
+        branch_id=other.branch_id,
+        counter_id=other.counter_id,
+        device_id=stranger.device_id,
+        role=str(SystemRole.OWNER),
+        permissions=frozenset(str(p) for p in permissions_for_role(SystemRole.OWNER)),
+        token_id="the-other-shop",
+        business_timezone=other.timezone,
+        full_name="Stranger",
+    )
+    created = InventoryService(session).apply_movements(
+        stranger_ctx,
+        branch_id=other.branch_id,
+        movements=[
+            MovementRequest(
+                product_id=product_id,
+                quantity=D("99"),
+                reason=MovementReason.OPENING,
+                source_type="test",
+                source_id=product_id,
+            )
+        ],
+    )
+    session.commit()
+    return created[0]
+
+
+def _business_today(session: Session, tenant: Tenant) -> date:
+    """The business's own date, read from Postgres with the business's own timezone.
+
+    Never `date.today()`: the report's day boundary is
+    `(created_at AT TIME ZONE <business tz>)::date`, so a test that used the runner's
+    clock would pass or fail according to where the runner happens to be.
+    """
+    return cast(
+        date,
+        session.execute(
+            text("SELECT (timezone((SELECT timezone FROM businesses WHERE id = :b), now()))::date"),
+            {"b": tenant.business_id},
+        ).scalar_one(),
+    )
+
+
+def _local_day_of(session: Session, movement_id: uuid.UUID) -> date:
+    """The business-local day a specific movement actually landed on.
+
+    Used instead of "today" wherever a test counts rows it has just written. Asking the
+    clock *after* the write leaves a sub-second window at each midnight in which the rows
+    sit on one day while the question asks about the next — a once-a-day failure with
+    nothing to do with the behaviour under test. Reading the day off the row cannot drift,
+    and it is the very expression the report groups by.
+    """
+    return cast(
+        date,
+        session.execute(
+            text(
+                "SELECT (timezone((SELECT timezone FROM businesses WHERE id = m.business_id),"
+                " m.created_at))::date FROM stock_movements m WHERE m.id = :id"
+            ),
+            {"id": movement_id},
+        ).scalar_one(),
     )
 
 
@@ -495,6 +636,95 @@ def test_the_ledger_is_branch_scoped_when_a_branch_is_selected(
     scoped = service.movements(_ctx(tenant))
     assert scoped
     assert all(m.branch_id == tenant.branch_id for m in scoped)
+
+
+# --- reads with no branch selected -------------------------------------------
+#
+# `movements()` and `movement_report()` narrow by branch **only when one is chosen**,
+# unlike `balances()`, which calls `requires_branch` because a stock figure is meaningless
+# without a branch. That asymmetry is deliberate, and these two tests are what check it,
+# because the property that matters is a negative one: dropping the *branch* predicate
+# must not drop the *tenant* predicate with it.
+#
+# Reached from a direct service call rather than over HTTP. A signed-in user's token
+# always carries a concrete branch — `AuthService._issue_session` sets
+# `active_branch_id = membership.branch_id or branches[0].id`, so even an all-branches
+# owner lands on the first visible branch. The branch-less context is therefore the
+# internal caller's: a job, a script, or a service calling another service.
+
+
+def test_the_ledger_spans_every_branch_when_none_is_selected(
+    service: InventoryService,
+    tenant: Tenant,
+    product: uuid.UUID,
+    migration_session: Session,
+) -> None:
+    """No branch selected means every branch of **this** business — and no other's."""
+    annex = _another_branch(migration_session, tenant)
+    _stock(service, tenant, product, "5")
+    _stock(service, tenant, product, "7", branch_id=annex)
+    stranger_movement = _a_movement_in_another_business(migration_session)
+    migration_session.commit()
+
+    spanning = service.movements(_ctx_without_a_branch(tenant))
+
+    # Both of this business's branches are present — the point of not narrowing.
+    assert {m.branch_id for m in spanning} == {tenant.branch_id, annex}
+    # And the tenant predicate still holds, which is the part worth asserting.
+    assert all(m.business_id == tenant.business_id for m in spanning)
+    assert stranger_movement not in {m.id for m in spanning}
+
+
+def test_the_day_report_spans_every_branch_when_none_is_selected(
+    service: InventoryService,
+    tenant: Tenant,
+    product: uuid.UUID,
+    migration_session: Session,
+) -> None:
+    """The same rule on the day report, asserted on its figures rather than its SQL."""
+    annex = _another_branch(migration_session, tenant)
+    here = _stock(service, tenant, product, "5")
+    _stock(service, tenant, product, "7", branch_id=annex)
+    _a_movement_in_another_business(migration_session)
+    migration_session.commit()
+
+    report = service.movement_report(
+        _ctx_without_a_branch(tenant),
+        # The day these rows are actually on, not whatever the clock says afterwards.
+        on_date=_local_day_of(migration_session, here),
+        kind="added",
+    )
+
+    # 5 + 7, both branches counted, and nothing from the other shop added in.
+    assert report.total_quantity == D("12")
+    assert report.movements == 2
+    assert report.products == 1
+    # `invoices` is only meaningful for `sold`, and this is `added`.
+    assert report.invoices == 0
+
+
+# --- the report's own guard ---------------------------------------------------
+
+
+def test_a_kind_the_service_itself_does_not_recognise_is_refused(
+    service: InventoryService, tenant: Tenant, migration_session: Session
+) -> None:
+    """The service refuses an unknown `kind` on its own, not only at the route.
+
+    The route declares `kind` as `Query(pattern="^(added|sold)$")`, so an HTTP request
+    carrying anything else is rejected with a 422 before the service is reached — which is
+    why `tests/api/test_stock_movement_report.py` can assert that refusal without this
+    branch ever running. This is the second gate, for the internal callers that do not
+    come through the router at all, and it matters because the two names select *opposite*
+    halves of the ledger: silently treating an unknown kind as one of them would report
+    goods going out as goods coming in.
+    """
+    with pytest.raises(ValidationFailed) as caught:
+        service.movement_report(
+            _ctx(tenant), on_date=_business_today(migration_session, tenant), kind="everything"
+        )
+
+    assert "kind" in caught.value.details["fields"]
 
 
 # --- adjust: the reasoned, audited correction --------------------------------

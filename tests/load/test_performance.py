@@ -51,6 +51,7 @@ from sqlalchemy.orm import Session
 from bm.domain.auth.permissions import permissions_for_role
 from bm.domain.shared.clock import SystemClock
 from bm.domain.shared.context import AuthContext
+from tests.conftest import _require_a_test_database
 
 pytestmark = [pytest.mark.db, pytest.mark.slow]
 
@@ -85,6 +86,16 @@ def _url() -> str:
                     url = line.split("=", 1)[1].strip()
     if not url:
         pytest.skip("no database URL configured")
+    # The same refusal the rest of the suite applies, which this module used to miss.
+    #
+    # These tests build their own engine and so never pass through `conftest`'s
+    # fixtures, which is where `_require_a_test_database` is normally called. The
+    # fallback above reads `.env`, and in this project `.env` points
+    # `BM_MIGRATION_DATABASE_URL` at the **real** `bm` database — so
+    # `pytest tests/load -m slow` with no environment set would seed a
+    # 100 000-product catalogue straight into live business data. CI is unaffected:
+    # it sets the variable to `bm_perf`, which the guard already allows.
+    _require_a_test_database(url)
     return url
 
 

@@ -303,6 +303,89 @@ def test_every_added_row_satisfies_before_plus_quantity_equals_after(
         )
 
 
+# --- the per-product history, which reads the same ledger ---------------------
+#
+# The report answers "what happened today"; `GET /inventory/movements` answers "what
+# happened to this part". Both read `stock_movements`, so they can never disagree — but
+# the history additionally resolves each movement's `source_id` into the bill number a
+# shopkeeper recognises, and that resolution deserves its own test: a movement row saying
+# "sale, 0f3c…" is useless to the person holding the part.
+
+
+def test_a_sold_movement_carries_its_bill_number_in_the_products_history(
+    api_client: TestClient,
+    headers: dict[str, str],
+    tenant: Tenant,
+    product: dict[str, Any],
+    supplier: str,
+) -> None:
+    """`InventoryService.movement_references` turns a sale's `source_id` into its number.
+
+    Asserted end to end through a real finalised bill rather than a fabricated movement,
+    because the thing being checked is that the id written by **finalisation** is the id
+    the history can resolve. The two halves are written by different modules — `sales`
+    writes `source_type='invoice'` with the invoice id, `inventory` reads it back — and
+    nothing but a test like this notices if they stop agreeing.
+
+    The receipt's row is also asserted, and it has **no** reference here. That is this
+    endpoint's current behaviour, not an endorsement of it: `movement_references` resolves
+    invoices only, while `movement_report` additionally reports a purchase's
+    `supplier_document_number`. The same ledger row therefore shows a supplier document on
+    the day report and nothing in the per-product history — see
+    `test_a_purchase_receipt_appears_with_the_supplier_document` above for the other side.
+    The assertion records what the code does today so that a deliberate change to either
+    endpoint has to come past it; it is not a claim that the asymmetry is desirable.
+    """
+    _receive(api_client, headers, supplier, product["id"], "10.000", document="ASD/2026/914")
+    sale = _sell(api_client, headers, tenant, product["id"], "3.000")
+
+    response = api_client.get(
+        "/api/v1/inventory/movements",
+        headers=headers,
+        params={"product_id": product["id"], "oldest_first": True},
+    )
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+
+    sales = [row for row in items if row["reason"] == "sale"]
+    assert len(sales) == 1, "a sale must deduct stock exactly once"
+    # The actual bill number, resolved from the movement's source_id.
+    assert sales[0]["reference"] == sale["invoice"]["internal_reference"]
+    assert sales[0]["source_type"] == "invoice"
+    assert Decimal(sales[0]["quantity_delta"]) == Decimal("-3.000")
+    assert Decimal(sales[0]["balance_after"]) == Decimal("7.000")
+
+    # The receipt that put the stock there is in the same history, with no bill number.
+    receipts = [row for row in items if row["source_type"] == "purchase"]
+    assert receipts, "the purchase that stocked the shelf must be in the ledger"
+    assert all(row["reference"] is None for row in receipts)
+
+
+# A companion test asserting that `movement_references` cannot resolve **another** shop's
+# bill number was written here and then deliberately removed, because it could not fail
+# for the reason it claimed. The lookup is `Invoice.id.in_(invoice_ids)` where the ids come
+# from this business's own movements, so the `business_id` predicate is already redundant
+# for correctness: the only row that could expose its absence is a movement in one
+# business pointing at another business's invoice, which no application path can create.
+# Tenant scoping of the ledger itself is asserted by
+# `test_another_shops_movements_are_not_in_this_shops_report` below.
+#
+# Two kinds of unreachable state, kept apart on purpose — because the branch-less context
+# tests in `tests/unit/test_inventory_rules.py` do exercise something the HTTP layer never
+# produces, and the distinction is what makes one legitimate and the other not:
+#
+#   * An unreachable **argument** is still part of a method's contract.
+#     `AuthContext.branch_id` is declared `UUID | None` and `requires_branch` exists to
+#     refuse the `None` case, so a branch-less context is a value the domain layer
+#     promises to handle, and any internal caller — a job, a script, another service —
+#     can pass one. Testing it tests a promise.
+#   * An unreachable **database row** contradicts the schema's own integrity. A movement
+#     pointing at a foreign business's invoice is not a value some caller may supply; it
+#     is corruption. A test that manufactures it asserts behaviour in a state the system
+#     is built to make impossible, which is the kind of test this suite's own premise
+#     rules out.
+
+
 # --- stock sold ---------------------------------------------------------------
 
 
