@@ -416,10 +416,23 @@ class BootstrapSyncOut(Out):
     max_batch_size: int
 
 
+class BootstrapBusinessOut(Out):
+    """The shop's heading as configured. Every field may be empty, and an empty field is
+    rendered as nothing — never a placeholder and never the reference workbook's address
+    (FR-PRINT-016, OD-4)."""
+
+    display_name: str | None = None
+    address_lines: list[str] = Field(default_factory=list)
+    phone_numbers: list[str] = Field(default_factory=list)
+
+
 class BootstrapOut(Out):
     business_id: uuid.UUID
     branch_id: uuid.UUID | None
     counter: BootstrapCounterOut | None
+    #: So the on-screen bill header reads the same configured values the printed bill
+    #: already gets from `print_payload.business`, instead of the client hardcoding them.
+    business: BootstrapBusinessOut | None = None
     permissions: list[str]
     money_policy: MoneyPolicyOut
     #: Client-visible settings only; `max_open_drafts`, tax mode, discount caps and the
@@ -584,6 +597,13 @@ class StockBalanceOut(Out):
     #: `null` when the product has no reorder level set — which is not the same as a
     #: reorder level of zero, so the screen must not render "0" for it.
     reorder_level: QuantityStr | None = None
+    #: `null` for a product with no part code — including every product created from the
+    #: stock sheet, which has no part-number column.
+    sku: str | None = None
+    #: The selling price, so the Stock screen can show the owner's own four columns in one
+    #: request. Never a cost price: that needs `catalog.read.cost` and is absent from this
+    #: shape entirely (FR-CAT-004).
+    default_selling_price: MoneyStr | None = None
 
 
 class StockBalancesOut(Out):
@@ -603,6 +623,11 @@ class StockMovementOut(Out):
     oversell_override: bool
     override_reason: str | None = None
     created_at: datetime
+    #: The document this movement came from, when it has one a human can look up — an
+    #: invoice reference for a sale or its cancellation. `null` for a stock sheet entry,
+    #: a correction or the seed, which have no document; the screen shows nothing rather
+    #: than a placeholder.
+    reference: str | None = None
 
 
 class StockMovementsOut(Out):
@@ -610,8 +635,100 @@ class StockMovementsOut(Out):
     as_of: datetime
 
 
+class MovementReportLineOut(Out):
+    """One movement on the day's report."""
+
+    movement_id: uuid.UUID
+    product_id: uuid.UUID
+    product_name: str
+    sku: str | None = None
+    #: Unsigned — the report's `kind` carries the direction.
+    quantity: QuantityStr
+    #: Both come from the ledger: `balance_after` as recorded, and `before` as
+    #: `balance_after - quantity_delta`. Neither is reconstructed from today's total.
+    stock_before: QuantityStr
+    stock_after: QuantityStr
+    reason: str
+    #: Invoice number or supplier document number; `null` when the movement has no
+    #: document, which the screen shows as nothing rather than as a placeholder.
+    reference: str | None = None
+    #: `true` credit, `false` cash, `null` when the movement was not a sale.
+    is_credit: bool | None = None
+    #: `true` when the bill behind a sale has since been cancelled.
+    invoice_cancelled: bool | None = None
+    created_at: datetime
+
+
+class MovementReportOut(Out):
+    on_date: date
+    kind: str
+    items: list[MovementReportLineOut]
+    #: Distinct products, not rows.
+    products: int
+    total_quantity: QuantityStr
+    movements: int
+    #: Distinct bills behind the deductions; `0` on the `added` report.
+    invoices: int
+    #: `true` when the day held more movements than were returned.
+    truncated: bool
+    as_of: datetime
+
+
 class AdjustmentOut(Out):
     movement_id: uuid.UUID
+
+
+# --- stock entry (the owner's four-column sheet) ------------------------------
+
+
+class StockEntryCandidateOut(Out):
+    """One of several products sharing a normalised name, for the user to choose between."""
+
+    product_id: uuid.UUID
+    name: str
+
+
+class StockEntryMatchOut(Out):
+    """What saving this row would do, answered before anything is written.
+
+    `kind` is one of:
+
+    | `kind` | Meaning |
+    |---|---|
+    | `new` | No product has this name; saving creates one |
+    | `existing` | One active product matches; saving **adds** to its stock |
+    | `ambiguous` | Two or more match — the user must pick, nothing is guessed |
+    | `inactive` | The match is withdrawn from the catalog; reactivate it first |
+    """
+
+    kind: str
+    product_id: uuid.UUID | None = None
+    product_name: str | None = None
+    #: Stock on hand **now**, so the screen can show `20 + 200 = 220` before saving.
+    current_quantity: QuantityStr | None = None
+    current_price: MoneyStr | None = None
+    current_min_qty: QuantityStr | None = None
+    candidates: list[StockEntryCandidateOut] = Field(default_factory=list)
+
+
+class StockEntryResultOut(Out):
+    item: str
+    product_id: uuid.UUID
+    #: `true` when the product did not exist and was created by this row.
+    created: bool
+    quantity_added: QuantityStr
+    #: Before and after, both, so a caller can prove the quantity was **added** to the
+    #: existing figure rather than replacing it.
+    quantity_before: QuantityStr
+    quantity_after: QuantityStr
+    movement_id: uuid.UUID
+    #: `opening` for a product's first stock, `adjustment_increase` for a later arrival.
+    reason: str
+
+
+class StockEntriesOut(Out):
+    items: list[StockEntryResultOut]
+    as_of: datetime
 
 
 class SupplierOut(Out):

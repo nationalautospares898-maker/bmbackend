@@ -71,9 +71,23 @@ class ProductView:
 
     @property
     def is_low_stock(self) -> bool:
+        """**Strictly below** the product's own minimum (FR-INV-008).
+
+        `<`, not `<=`: the owner's rule is that an item is low once it "goes below the
+        minimum quantity", so a part with a minimum of 4 and 4 on the shelf is at its
+        minimum, not under it.
+
+        ⚠️ `LOW_STOCK_AFTER_SALE` deliberately uses `<=` instead
+        (`sales/service.py::_low_stock_warnings`). That warning is documented as firing
+        when stock "fell **to or** below `reorder_level`"
+        (`docs/API-SPECIFICATION.md §4.3`) and is a published contract with its own
+        registered warning code. The two are different questions — *"reorder this soon"*
+        after a sale, versus *"this is short right now"* on the Stock screen — and
+        unifying them would silently change a documented response.
+        """
         if self.branch_quantity is None or self.reorder_level is None:
             return False
-        return self.branch_quantity <= self.reorder_level
+        return self.branch_quantity < self.reorder_level
 
 
 class CatalogService:
@@ -178,6 +192,24 @@ class CatalogService:
             include_inactive=include_inactive,
         )
         return [self._view(r, ctx) for r in rows]
+
+    def find_by_exact_name(self, ctx: AuthContext, name: str) -> list[tuple[uuid.UUID, str, bool]]:
+        """Products whose **normalised name** equals this one, with their active flags.
+
+        Exact on `normalize_name` — lower-cased, accent-stripped, whitespace-collapsed —
+        so `Axel Packing`, `axel packing` and `Axel  Packing` are one part, while
+        `Brake Shoe Set Ace` and `Brake Shoe Set Bolero` stay two. Deliberately **not**
+        `search()`: trigram ranking is the right tool for *finding* a product a human then
+        picks from, and the wrong tool for deciding that two names denote the same part.
+
+        Returns every match, because the column is not unique. Identity decisions belong
+        to the caller (`domain/stockentry/service.py`), which refuses rather than guesses.
+        """
+        ctx.require(Permission.CATALOG_READ)
+        clean = name.strip()
+        if not clean:
+            return []
+        return self._repo.find_by_normalized_name(ctx.business_id, normalize_name(clean))
 
     def lookup_barcode(self, ctx: AuthContext, code: str) -> ProductView:
         ctx.require(Permission.CATALOG_READ)

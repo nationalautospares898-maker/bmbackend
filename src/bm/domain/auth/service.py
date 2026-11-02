@@ -188,6 +188,70 @@ class AuthService:
             must_change_password=claims.must_change_password,
         )
 
+    # --- billing readiness ---------------------------------------------------
+
+    def _ensure_billing_counter(
+        self,
+        *,
+        device_id: uuid.UUID,
+        business_id: uuid.UUID,
+        branch_id: uuid.UUID | None,
+        current_counter_id: uuid.UUID | None,
+        actor_user_id: uuid.UUID,
+    ) -> uuid.UUID | None:
+        """Make this computer able to bill, without anybody configuring anything.
+
+        **Why this exists.** The owner runs the shop from one computer and asked for the
+        counter feature to stop being part of the workflow. It could not simply be hidden:
+        `draft_bills.counter_id` and `invoices.counter_id` are `NOT NULL`, every sales
+        report groups by counter, and `DraftUpsertRequest` requires one. So the counter
+        remains the internal bookkeeping dimension it always was — historical invoices
+        stay readable, no migration, no column dropped, no history deleted — and what is
+        removed is the **human requirement** to set it up. A freshly installed PC binds
+        itself to the shop's counter on first login and bills immediately.
+
+        **What it deliberately does not do.** It never overwrites an assignment somebody
+        made on purpose (the `counter_id IS NULL` guard lives in the `UPDATE`), it never
+        touches a revoked device, and it never invents a counter in another branch. The
+        binding is audited as `device.counter_assigned` exactly as the manual action was,
+        so the trail still answers "whose takings does this machine's next sale land in" —
+        with `reason` recording that the server decided rather than a person.
+
+        Returning `None` is possible and is handled by the caller's existing paths: a
+        business whose branch has no active counter at all cannot have one invented for
+        it here, because that is a provisioning decision and this is a login.
+        """
+        if current_counter_id is not None:
+            return current_counter_id
+
+        counter_id = self._repo.default_counter_for(business_id, branch_id)
+        if counter_id is None:
+            return None
+
+        if self._repo.bind_device_counter(device_id, business_id, counter_id=counter_id):
+            audit.record(
+                self._session,
+                business_id=business_id,
+                action=AuditAction.DEVICE_COUNTER_ASSIGNED,
+                entity_type="device",
+                entity_id=device_id,
+                actor_user_id=actor_user_id,
+                branch_id=branch_id,
+                device_id=device_id,
+                counter_id=counter_id,
+                reason="assigned automatically on first sign-in",
+                before={"counter_id": None},
+                after={"counter_id": str(counter_id)},
+            )
+            return counter_id
+
+        # Lost the race to a concurrent login, or the device was revoked between the
+        # read and the write. Re-read rather than assume: the other transaction's value
+        # is the truth, and billing with a counter this one merely proposed would be a
+        # guess.
+        device = self._repo.get_device(device_id, business_id)
+        return device.counter_id if device else None
+
     # --- login ---------------------------------------------------------------
 
     def login(
@@ -267,6 +331,128 @@ class AuthService:
             )
             raise DeviceRevoked()
 
+        return self._issue_session(
+            user=user,
+            business=business,
+            memberships=memberships,
+            device_id=device_id,
+            device_label=device_label,
+            user_agent=user_agent,
+            ip_digest=ip_digest,
+            username=username,
+            now=now,
+        )
+
+    def unattended_session(
+        self,
+        *,
+        username: str,
+        device_id: uuid.UUID,
+        device_label: str,
+        user_agent: str | None = None,
+        ip: str | None = None,
+    ) -> LoginResult:
+        """Issue a session with **no password**, for a server configured to allow it.
+
+        The owner runs the shop from one computer and asked for the application to open
+        straight into billing rather than onto a sign-in form. This is the whole of that
+        change on the server side.
+
+        **What it does not do.** It does not weaken a single check that happens after a
+        session exists. The token it mints is an ordinary one with the account's real
+        role and permissions; every endpoint still requires it; tenant scope still comes
+        from the token; `must_change_password` still blocks; refresh rotation and reuse
+        detection are unchanged; and `resolve_context` still re-checks the device on every
+        request, so a **revoked device is still refused** — which is the control that
+        matters most here, because it is the only way to take access away from a machine
+        once it has walked out of the shop.
+
+        **What it genuinely gives up.** Anyone who can reach this endpoint gets a working
+        session. There is no password to fail and no second factor. That is acceptable
+        exactly when network access is already controlled — a server bound to localhost,
+        or a LAN the shop owns — and it is not acceptable on the open internet. The caller
+        is the operator's own configuration, so the decision is theirs to make explicitly:
+        `AuthService` never enables this of its own accord, and `Settings.unattended_access`
+        is off unless somebody sets it.
+
+        The account is still a real one. The session belongs to it, the audit trail names
+        it, and the attempt is recorded — so "who did this" has the same answer it always
+        had. The audit row carries a reason saying no password was presented, so the trail
+        does not pretend somebody typed one.
+        """
+        now = self._clock.now()
+        ip_digest = hash_ip(ip, pepper=self._config.ip_hash_pepper)
+
+        user = self._repo.find_user_by_username(username)
+        if user is None or not user.is_active:
+            # A misconfigured account name is an operator error, not an attack, and it is
+            # reported as one: there is no caller to enumerate accounts here, because the
+            # name came from the server's own configuration rather than from a request.
+            raise UserInactive(
+                "The account configured for unattended access is missing or inactive."
+            )
+
+        memberships = self._repo.memberships_for(user.id)
+        if not memberships:
+            raise UserInactive("This account has no assigned role yet. Ask the owner to set one.")
+
+        business = self._repo.get_business(user.business_id)
+        if business is None:
+            raise UserInactive()
+
+        device = self._repo.get_device(device_id, user.business_id)
+        if device is not None and device.is_revoked:
+            # The same refusal a password login gets. Revocation is what makes a lost
+            # machine recoverable, and skipping it here would hollow that out.
+            self._record_attempt_durably(
+                business_id=user.business_id,
+                username=username,
+                ip_hash=ip_digest,
+                succeeded=False,
+                reason="device_revoked",
+            )
+            raise DeviceRevoked()
+
+        return self._issue_session(
+            user=user,
+            business=business,
+            memberships=memberships,
+            device_id=device_id,
+            device_label=device_label,
+            user_agent=user_agent,
+            ip_digest=ip_digest,
+            username=username,
+            now=now,
+            audit_reason="unattended access — no password was presented",
+        )
+
+    def _issue_session(
+        self,
+        *,
+        user: UserRecord,
+        business: BusinessRecord,
+        memberships: list[MembershipRecord],
+        device_id: uuid.UUID,
+        device_label: str,
+        user_agent: str | None,
+        ip_digest: str | None,
+        username: str,
+        now: datetime,
+        audit_reason: str | None = None,
+    ) -> LoginResult:
+        """Everything that happens **after** a caller has been authenticated.
+
+        Extracted so `login` and `unattended_session` cannot drift apart. The two differ
+        only in how the caller proves who they are — a password, or a server that has
+        been configured to vouch for them. What a session *is* must be identical either
+        way: the same token contents, the same rotation family, the same device
+        registration, the same counter binding, the same audit row. Duplicating sixty
+        lines of that in two places is how one of them quietly stops matching the other,
+        and this is security-critical code.
+
+        `audit_reason` is the one deliberate difference, so the trail distinguishes a
+        session somebody typed a password for from one the server granted on its own.
+        """
         membership = self._primary_membership(memberships)
         branches = self._visible_branches(user.business_id, memberships)
         active_branch_id = membership.branch_id or (branches[0].id if branches else None)
@@ -279,6 +465,14 @@ class AuthService:
             user_agent=user_agent,
         )
 
+        effective_counter_id = self._ensure_billing_counter(
+            device_id=device.id,
+            business_id=user.business_id,
+            branch_id=active_branch_id,
+            current_counter_id=device.counter_id,
+            actor_user_id=user.id,
+        )
+
         permissions = self._repo.permissions_for_role(membership.role_id)
 
         access_token, token_id = mint_access_token(
@@ -287,7 +481,7 @@ class AuthService:
             user_id=user.id,
             business_id=user.business_id,
             branch_id=active_branch_id,
-            counter_id=device.counter_id,
+            counter_id=effective_counter_id,
             device_id=device.id,
             role=membership.role_code,
             permissions=permissions,
@@ -325,6 +519,10 @@ class AuthService:
             branch_id=active_branch_id,
             device_id=device.id,
             ip_hash=ip_digest,
+            # The one difference between a password login and an unattended one, so the
+            # trail distinguishes them. `None` for an ordinary login, which keeps every
+            # existing audit row exactly as it was.
+            reason=audit_reason,
             # A correlation id for the issued session, not the token itself — the
             # token is never logged or audited (FR-AUDIT-004).
             after={"session_reference": token_id, "role": membership.role_code},

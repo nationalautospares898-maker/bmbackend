@@ -508,6 +508,30 @@ class CatalogRepository:
             )
         ).scalar_one_or_none()
 
+    def find_by_normalized_name(
+        self, business_id: uuid.UUID, normalized_name: str
+    ) -> list[tuple[uuid.UUID, str, bool]]:
+        """Every product whose normalised name matches **exactly**, with its active flag.
+
+        A list rather than one row, and that is the point: `products.normalized_name`
+        carries no unique index — only `normalized_sku` and `barcode` do (migration
+        0006) — so two products may genuinely share a normalised name. A caller that got
+        `scalar_one_or_none()` here would either raise on a legitimate catalog or, worse,
+        quietly take the first row and merge the stock of two different parts.
+
+        Ordered by `created_at` so the candidate list a user is asked to choose between
+        is stable between requests.
+        """
+        rows = self._session.execute(
+            select(Product.id, Product.name, Product.is_active)
+            .where(
+                Product.business_id == business_id,
+                Product.normalized_name == normalized_name,
+            )
+            .order_by(Product.created_at, Product.id)
+        ).all()
+        return [(r[0], r[1], r[2]) for r in rows]
+
     def find_by_barcode(self, business_id: uuid.UUID, barcode: str) -> uuid.UUID | None:
         return self._session.execute(
             select(Product.id).where(Product.business_id == business_id, Product.barcode == barcode)

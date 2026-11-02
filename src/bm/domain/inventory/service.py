@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import func, insert, select, text, update
+from sqlalchemy import Date, and_, cast, func, insert, select, text, update
 from sqlalchemy.orm import Session
 
 from bm.domain.audit import service as audit
@@ -34,6 +35,7 @@ from bm.domain.shared.errors import (
     OversellReasonRequired,
     ValidationFailed,
 )
+from bm.domain.shared.ids import uuid7
 from bm.domain.shared.money import ZERO, parse_decimal
 from bm.infra.db.enums import MovementReason
 from bm.infra.db.models.inventory import InventoryBalance, StockMovement
@@ -81,6 +83,74 @@ class Shortfall:
     product_id: uuid.UUID
     requested: Decimal
     available: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class MovementReportLine:
+    """One stock movement, as the day's report shows it.
+
+    `stock_before` and `stock_after` are the ledger's own figures — `balance_after` as it
+    was written, and `balance_after - quantity_delta` for the value immediately before.
+    Neither is derived from today's total, which is the difference between a report the
+    owner can act on and one that merely looks plausible.
+    """
+
+    movement_id: uuid.UUID
+    product_id: uuid.UUID
+    product_name: str
+    sku: str | None
+    #: Unsigned; the report's kind says the direction.
+    quantity: Decimal
+    stock_before: Decimal
+    stock_after: Decimal
+    reason: str
+    #: The invoice number or the supplier's document number, when the movement has one.
+    #: `None` for a stock-sheet entry, a correction or the opening figure — those have no
+    #: document, and a placeholder would imply one exists.
+    reference: str | None
+    #: `True` credit, `False` cash, `None` when the movement was not a sale at all.
+    is_credit: bool | None
+    #: Whether the bill behind a sale was later cancelled, so a deduction that has since
+    #: been reversed is not read as stock still gone.
+    invoice_cancelled: bool | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class MovementReport:
+    """A day's movements plus the totals the owner reads first."""
+
+    on_date: date
+    kind: str
+    lines: list[MovementReportLine]
+    #: Distinct products, not rows: five movements of one part affect one product.
+    products: int
+    total_quantity: Decimal
+    movements: int
+    #: Distinct bills contributing deductions. Zero for the `added` report.
+    invoices: int
+    #: True when the day held more movements than were returned, so the screen can say so
+    #: instead of showing a short list that looks complete.
+    truncated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StockRow:
+    """One product's stock position, as the Stock screen shows it.
+
+    A dataclass rather than the tuple this used to return: the row grew from four values
+    to six, and a positional tuple of six is how a caller ends up rendering the part code
+    in the price column.
+    """
+
+    product_id: uuid.UUID
+    name: str
+    quantity: Decimal
+    #: This product's own minimum. `None` means no threshold is set, which is **not** a
+    #: threshold of zero — the screen must not render "0" for it.
+    reorder_level: Decimal | None
+    sku: str | None
+    default_selling_price: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,7 +339,12 @@ class InventoryService:
             movement_id = self._session.execute(
                 insert(StockMovement)
                 .values(
-                    id=uuid.uuid4(),
+                    # Time-ordered, **not** `uuid4`. `created_at` is the transaction
+                    # timestamp, so every row one transaction writes shares it; a UUIDv7
+                    # makes `(created_at, id)` a real insertion order and keeps a
+                    # product's running-balance history readable downwards. See
+                    # `domain/shared/ids.py`.
+                    id=uuid7(),
                     business_id=ctx.business_id,
                     branch_id=branch_id,
                     product_id=movement.product_id,
@@ -335,8 +410,17 @@ class InventoryService:
         product_ids: list[uuid.UUID] | None = None,
         low_stock_only: bool = False,
         limit: int = 200,
-    ) -> list[tuple[uuid.UUID, str, Decimal, Decimal | None]]:
-        """`(product_id, name, quantity, reorder_level)` for the caller's branch."""
+    ) -> list[StockRow]:
+        """One row per product held at the caller's branch.
+
+        Carries the **selling price and part code** as well as the quantity, because the
+        Stock screen shows the owner's own four columns — Item, Price, Min Qty, Stock Qty
+        — and fetching the price separately would mean a second request per product just
+        to render a list.
+
+        Never the cost price: that is gated on `catalog.cost.read` and is omitted from
+        this shape entirely rather than nulled (FR-CAT-004).
+        """
         ctx.require(Permission.CATALOG_READ)
         from bm.infra.db.models.catalog import Product
 
@@ -346,6 +430,8 @@ class InventoryService:
                 Product.name,
                 InventoryBalance.quantity,
                 Product.reorder_level,
+                Product.sku,
+                Product.default_selling_price,
             )
             .join(Product, Product.id == InventoryBalance.product_id)
             .where(
@@ -358,11 +444,30 @@ class InventoryService:
         if product_ids:
             query = query.where(InventoryBalance.product_id.in_(product_ids))
         if low_stock_only:
+            # **Strictly below** this product's own minimum (FR-INV-008). The threshold
+            # is per product — `products.reorder_level`, set item by item — never one
+            # figure applied to the whole catalog.
+            #
+            # `<` rather than `<=`, matching `CatalogService.ProductView.is_low_stock`,
+            # so the Stock screen's list and a product's own badge can never disagree.
+            # A product with no minimum set is not "low"; it has no threshold to be under,
+            # which is why the `is_not(None)` test comes first rather than treating a
+            # missing minimum as zero.
             query = query.where(
                 Product.reorder_level.is_not(None),
-                InventoryBalance.quantity <= Product.reorder_level,
+                InventoryBalance.quantity < Product.reorder_level,
             )
-        return [(r[0], r[1], r[2], r[3]) for r in self._session.execute(query).all()]
+        return [
+            StockRow(
+                product_id=r[0],
+                name=r[1],
+                quantity=r[2],
+                reorder_level=r[3],
+                sku=r[4],
+                default_selling_price=r[5],
+            )
+            for r in self._session.execute(query).all()
+        ]
 
     def movements(
         self,
@@ -370,13 +475,27 @@ class InventoryService:
         *,
         product_id: uuid.UUID | None = None,
         limit: int = 200,
+        oldest_first: bool = False,
     ) -> list[StockMovement]:
-        """The product ledger (FR-INV-001)."""
+        """The product ledger (FR-INV-001).
+
+        `oldest_first` is what a product's **history** wants: read downwards, each row's
+        `balance_after` follows from the one above it, which is how a shopkeeper checks a
+        figure. Newest-first stays the default so no existing caller changes behaviour.
+        """
         ctx.require(Permission.CATALOG_READ)
+        order = (
+            (StockMovement.created_at.asc(), StockMovement.id.asc())
+            if oldest_first
+            # `id` breaks the tie: the seed wrote fifteen opening rows inside one
+            # transaction, so `created_at` alone leaves their order undefined and the
+            # history could reshuffle between two identical requests.
+            else (StockMovement.created_at.desc(), StockMovement.id.desc())
+        )
         query = (
             select(StockMovement)
             .where(StockMovement.business_id == ctx.business_id)
-            .order_by(StockMovement.created_at.desc())
+            .order_by(*order)
             .limit(min(limit, 200))
         )
         if ctx.branch_id is not None:
@@ -384,6 +503,212 @@ class InventoryService:
         if product_id is not None:
             query = query.where(StockMovement.product_id == product_id)
         return list(self._session.execute(query).scalars().all())
+
+    def movement_report(
+        self, ctx: AuthContext, *, on_date: date, kind: str, limit: int = 1000
+    ) -> MovementReport:
+        """Every stock movement of one business-local day, grouped as added or sold.
+
+        The owner already has a per-product history; this answers the other question —
+        *what moved today?* — and it is read from the same append-only ledger, so the two
+        can never disagree.
+
+        **Nothing here is reconstructed.** `stock_movements` records `balance_after` at the
+        moment the movement was written, and `quantity_delta` is signed, so
+
+            stock_before = balance_after - quantity_delta
+
+        is arithmetic on two stored columns rather than a replay of history or a guess
+        from today's total. That identity is what makes the report trustworthy on a
+        product that moved five times in a day, and it is asserted directly in the tests.
+
+        **What counts as each kind**, stated as a rule rather than a list so a reason
+        added later cannot be silently dropped:
+
+        * `added` — **every movement that increased stock** (`quantity_delta > 0`):
+          opening stock, a purchase receipt, the owner's stock sheet, a correction
+          upwards, a customer return, a transfer in, an applied import, and the reversal
+          of a cancelled bill. A reversal genuinely puts goods back on the shelf, so
+          hiding it would make this report disagree with the ledger it is reading.
+        * `sold` — **`reason = 'sale'` only.** Not corrections downwards, not scrap: the
+          question is what customers took away. A sale movement exists only because a bill
+          was finalised, which is the whole of "drafts and unconfirmed sales are excluded"
+          — they never reach this table. Reprinting a bill writes no movement, and a
+          credit payment moves money rather than goods, so neither can appear.
+
+        A bill cancelled **later** keeps its original deduction on the day it happened and
+        gains a reversing row on the day it was cancelled. That is the ledger's own
+        account of events and the two days reconcile; rewriting history to hide it would
+        be the fabrication this docstring exists to rule out.
+
+        One query, joined to `products` for the name and code and left-joined to the two
+        documents a movement can have, so a day with two hundred rows costs one round
+        trip rather than two hundred.
+        """
+        ctx.require(Permission.CATALOG_READ)
+        if kind not in {"added", "sold"}:
+            raise ValidationFailed({"kind": "Choose either stock added or stock sold."})
+
+        # The same business-local day boundary `ReportService.daily_sales` uses, so
+        # "today" means the same thing on this report as it does on Daily Bills. A sale at
+        # 23:59 belongs to the day the shop was open, not to whatever UTC had reached.
+        timezone = self._session.execute(
+            text("SELECT timezone FROM businesses WHERE id = :id"),
+            {"id": ctx.business_id},
+        ).scalar_one()
+
+        # Built with the query builder rather than assembled as SQL text. Two of these
+        # predicates are chosen at runtime, and `tests/structural` forbids interpolating
+        # anything conditional into `text()` (T-8) — correctly, because that is the shape
+        # injection takes even when today's inputs happen to be safe.
+        #
+        # Imported here rather than at module level, the same way `movement_references`
+        # reaches for `Invoice`: a cross-module **read** is allowed, and keeping it local
+        # keeps the import graph the layering contracts check unchanged.
+        from bm.infra.db.models.catalog import Product
+        from bm.infra.db.models.credit import Purchase
+        from bm.infra.db.models.sales import Invoice
+
+        # `timezone(tz, timestamptz)` is Postgres's `AT TIME ZONE`, so this is the same
+        # business-local day boundary `ReportService.daily_sales` applies to invoices.
+        local_day = cast(func.timezone(timezone, StockMovement.created_at), Date)
+
+        query = (
+            select(
+                StockMovement.id,
+                StockMovement.product_id,
+                Product.name.label("product_name"),
+                Product.sku.label("sku"),
+                StockMovement.quantity_delta,
+                StockMovement.balance_after,
+                StockMovement.reason,
+                StockMovement.source_type,
+                StockMovement.created_at,
+                Invoice.invoice_number.label("invoice_number"),
+                Invoice.is_credit.label("is_credit"),
+                Invoice.status.label("invoice_status"),
+                Purchase.supplier_document_number.label("supplier_document_number"),
+            )
+            .join(Product, Product.id == StockMovement.product_id)
+            # Left joins, because most movements have no document: a correction and the
+            # opening figure have none, and neither should drop out of the report.
+            .outerjoin(
+                Invoice,
+                and_(
+                    StockMovement.source_type == "invoice",
+                    Invoice.id == StockMovement.source_id,
+                    Invoice.business_id == StockMovement.business_id,
+                ),
+            )
+            .outerjoin(
+                Purchase,
+                and_(
+                    StockMovement.source_type == "purchase",
+                    Purchase.id == StockMovement.source_id,
+                    Purchase.business_id == StockMovement.business_id,
+                ),
+            )
+            .where(StockMovement.business_id == ctx.business_id, local_day == on_date)
+            # Deterministic: two identical requests return the same order, and a
+            # same-transaction tie is broken by the time-ordered movement id.
+            .order_by(StockMovement.created_at.asc(), StockMovement.id.asc())
+            # One row over the limit, so the caller can be **told** it was truncated
+            # rather than shown a short list that looks complete.
+            .limit(limit + 1)
+        )
+        if ctx.branch_id is not None:
+            query = query.where(StockMovement.branch_id == ctx.branch_id)
+        if kind == "added":
+            query = query.where(StockMovement.quantity_delta > 0)
+        else:
+            query = query.where(StockMovement.reason == MovementReason.SALE)
+
+        rows = self._session.execute(query).all()
+
+        truncated = len(rows) > limit
+        rows = rows[:limit]
+
+        lines = [
+            MovementReportLine(
+                movement_id=row.id,
+                product_id=row.product_id,
+                product_name=row.product_name,
+                sku=row.sku,
+                # Reported unsigned: the column already says whether it was added or
+                # sold, and a shopkeeper reading "sold -3" has to do a double take.
+                quantity=abs(row.quantity_delta),
+                stock_before=row.balance_after - row.quantity_delta,
+                stock_after=row.balance_after,
+                reason=str(row.reason),
+                reference=row.invoice_number or row.supplier_document_number,
+                # `None` for anything that is not a sale, so the client shows nothing
+                # rather than guessing "cash" for a correction.
+                is_credit=row.is_credit if row.source_type == "invoice" else None,
+                invoice_cancelled=(
+                    row.invoice_status == "cancelled" if row.invoice_number else None
+                ),
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+
+        return MovementReport(
+            on_date=on_date,
+            kind=kind,
+            lines=lines,
+            products=len({line.product_id for line in lines}),
+            total_quantity=sum((line.quantity for line in lines), ZERO),
+            movements=len(lines),
+            # Only meaningful for `sold`, and counted from the references actually present
+            # rather than assumed to equal the number of rows: one bill commonly moves
+            # several products.
+            invoices=len({line.reference for line in lines if line.reference})
+            if kind == "sold"
+            else 0,
+            truncated=truncated,
+        )
+
+    def movement_references(
+        self, ctx: AuthContext, movements: list[StockMovement]
+    ) -> dict[uuid.UUID, str]:
+        """`movement_id → the document it came from`, for the ones that have one.
+
+        A movement records `source_type` and `source_id`, which identify the cause but
+        are not readable: "sale, 0f3c…" tells a shopkeeper nothing, while
+        "Sale · NAS/2026-27/00004" is the bill they can go and look at. Only invoices are
+        resolved — they are the only source with a reference a human already knows.
+        A sheet entry, an adjustment or the seed has no document, and is left absent
+        rather than given a placeholder.
+
+        One query for the whole page, not one per row.
+        """
+        ctx.require(Permission.CATALOG_READ)
+        invoice_ids = {
+            movement.source_id
+            for movement in movements
+            if movement.source_type == "invoice" and movement.source_id is not None
+        }
+        if not invoice_ids:
+            return {}
+
+        # A cross-module **read** of a table `sales` owns, the same way `balances()`
+        # reads `products`. Ownership is about who may *write* a table
+        # (`CLAUDE.md §4`), and resolving a label needs no sales rule applied.
+        # `business_id` is still predicated, so a reference cannot leak across tenants.
+        from bm.infra.db.models.sales import Invoice
+
+        rows = self._session.execute(
+            select(Invoice.id, Invoice.invoice_number).where(
+                Invoice.business_id == ctx.business_id,
+                Invoice.id.in_(invoice_ids),
+            )
+        ).all()
+        by_invoice = {row[0]: row[1] for row in rows if row[1]}
+        return {
+            movement.id: by_invoice[movement.source_id]
+            for movement in movements
+            if movement.source_id in by_invoice
+        }
 
     # --- adjustments ----------------------------------------------------------
 

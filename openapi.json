@@ -260,6 +260,39 @@
         "title": "Body_upload_import_api_v1_imports_post",
         "type": "object"
       },
+      "BootstrapBusinessOut": {
+        "additionalProperties": false,
+        "description": "The shop's heading as configured. Every field may be empty, and an empty field is\nrendered as nothing — never a placeholder and never the reference workbook's address\n(FR-PRINT-016, OD-4).",
+        "properties": {
+          "address_lines": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Address Lines",
+            "type": "array"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "phone_numbers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Phone Numbers",
+            "type": "array"
+          }
+        },
+        "title": "BootstrapBusinessOut",
+        "type": "object"
+      },
       "BootstrapCounterOut": {
         "additionalProperties": false,
         "properties": {
@@ -304,6 +337,16 @@
               }
             ],
             "title": "Branch Id"
+          },
+          "business": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BootstrapBusinessOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "business_date": {
             "format": "date",
@@ -3164,6 +3207,162 @@
         "title": "MoneyPolicyOut",
         "type": "object"
       },
+      "MovementReportLineOut": {
+        "additionalProperties": false,
+        "description": "One movement on the day's report.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "invoice_cancelled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Cancelled"
+          },
+          "is_credit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Credit"
+          },
+          "movement_id": {
+            "format": "uuid",
+            "title": "Movement Id",
+            "type": "string"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "product_name": {
+            "title": "Product Name",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku"
+          },
+          "stock_after": {
+            "title": "Stock After",
+            "type": "string"
+          },
+          "stock_before": {
+            "title": "Stock Before",
+            "type": "string"
+          }
+        },
+        "required": [
+          "movement_id",
+          "product_id",
+          "product_name",
+          "quantity",
+          "stock_before",
+          "stock_after",
+          "reason",
+          "created_at"
+        ],
+        "title": "MovementReportLineOut",
+        "type": "object"
+      },
+      "MovementReportOut": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "invoices": {
+            "title": "Invoices",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MovementReportLineOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "movements": {
+            "title": "Movements",
+            "type": "integer"
+          },
+          "on_date": {
+            "format": "date",
+            "title": "On Date",
+            "type": "string"
+          },
+          "products": {
+            "title": "Products",
+            "type": "integer"
+          },
+          "total_quantity": {
+            "title": "Total Quantity",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "on_date",
+          "kind",
+          "items",
+          "products",
+          "total_quantity",
+          "movements",
+          "invoices",
+          "truncated",
+          "as_of"
+        ],
+        "title": "MovementReportOut",
+        "type": "object"
+      },
       "NamedOut": {
         "properties": {
           "id": {
@@ -4935,6 +5134,17 @@
       "StockBalanceOut": {
         "additionalProperties": false,
         "properties": {
+          "default_selling_price": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Selling Price"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -4958,6 +5168,17 @@
               }
             ],
             "title": "Reorder Level"
+          },
+          "sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku"
           }
         },
         "required": [
@@ -4989,6 +5210,251 @@
           "as_of"
         ],
         "title": "StockBalancesOut",
+        "type": "object"
+      },
+      "StockEntriesOut": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StockEntryResultOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "as_of"
+        ],
+        "title": "StockEntriesOut",
+        "type": "object"
+      },
+      "StockEntryCandidateOut": {
+        "additionalProperties": false,
+        "description": "One of several products sharing a normalised name, for the user to choose between.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "name"
+        ],
+        "title": "StockEntryCandidateOut",
+        "type": "object"
+      },
+      "StockEntryMatchOut": {
+        "additionalProperties": false,
+        "description": "What saving this row would do, answered before anything is written.\n\n`kind` is one of:\n\n| `kind` | Meaning |\n|---|---|\n| `new` | No product has this name; saving creates one |\n| `existing` | One active product matches; saving **adds** to its stock |\n| `ambiguous` | Two or more match — the user must pick, nothing is guessed |\n| `inactive` | The match is withdrawn from the catalog; reactivate it first |",
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/StockEntryCandidateOut"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "current_min_qty": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Min Qty"
+          },
+          "current_price": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Price"
+          },
+          "current_quantity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Quantity"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "product_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Id"
+          },
+          "product_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Name"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "StockEntryMatchOut",
+        "type": "object"
+      },
+      "StockEntryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/StockEntryRow"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "StockEntryRequest",
+        "type": "object"
+      },
+      "StockEntryResultOut": {
+        "additionalProperties": false,
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "item": {
+            "title": "Item",
+            "type": "string"
+          },
+          "movement_id": {
+            "format": "uuid",
+            "title": "Movement Id",
+            "type": "string"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "quantity_added": {
+            "title": "Quantity Added",
+            "type": "string"
+          },
+          "quantity_after": {
+            "title": "Quantity After",
+            "type": "string"
+          },
+          "quantity_before": {
+            "title": "Quantity Before",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "product_id",
+          "created",
+          "quantity_added",
+          "quantity_before",
+          "quantity_after",
+          "movement_id",
+          "reason"
+        ],
+        "title": "StockEntryResultOut",
+        "type": "object"
+      },
+      "StockEntryRow": {
+        "additionalProperties": false,
+        "description": "One row of the owner's four-column sheet: Item · Price · Min Qty · Stock Qty.",
+        "properties": {
+          "item": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Item",
+            "type": "string"
+          },
+          "min_qty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Min Qty"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Price"
+          },
+          "stock_qty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Stock Qty"
+          }
+        },
+        "required": [
+          "item",
+          "price",
+          "min_qty",
+          "stock_qty"
+        ],
+        "title": "StockEntryRow",
         "type": "object"
       },
       "StockMovementOut": {
@@ -5035,6 +5501,17 @@
           "reason": {
             "title": "Reason",
             "type": "string"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
           },
           "source_id": {
             "format": "uuid",
@@ -5389,6 +5866,20 @@
           "server_state"
         ],
         "title": "SyncOperationResultOut",
+        "type": "object"
+      },
+      "UnattendedRequest": {
+        "additionalProperties": false,
+        "description": "No credentials — the device is the only thing the caller supplies.",
+        "properties": {
+          "device": {
+            "$ref": "#/components/schemas/DeviceInput"
+          }
+        },
+        "required": [
+          "device"
+        ],
+        "title": "UnattendedRequest",
         "type": "object"
       },
       "UnitOut": {
@@ -6973,6 +7464,66 @@
           }
         },
         "summary": "Select Branch",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/unattended": {
+      "post": {
+        "description": "Open a session with no password, when this server is configured to allow it.\n\nThe shop runs from one computer and wanted the application to open straight into\nbilling. This is how: the browser asks for a session, and a server that has been told\nto vouch for it issues an ordinary one.\n\n**Disabled unless somebody turns it on.** `BM_UNATTENDED_ACCESS` is off by default and\na server with it off refuses here, so no deployment acquires this by upgrading. When\nit is on, `BM_UNATTENDED_USERNAME` names the account the session belongs to — the\naudit trail still says who acted, and the row carries a reason recording that no\npassword was presented.\n\n**Nothing downstream changes.** The response is the same `SessionOut` a login returns,\nwith the same access token, the same rotating refresh cookie, the same permissions and\nthe same device registration. Every other endpoint still demands that token and still\nchecks its permissions; a revoked device is still refused here and everywhere else.\n\n**The risk, stated plainly:** anyone who can reach this endpoint gets a working\nsession. Enable it only where the network is already controlled — bound to localhost,\nor on a LAN the shop owns — never on a server reachable from the open internet.",
+        "operationId": "unattended_api_v1_auth_unattended_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "user-agent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "User-Agent"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnattendedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unattended",
         "tags": [
           "auth"
         ]
@@ -10086,7 +10637,7 @@
     },
     "/api/v1/inventory/movements": {
       "get": {
-        "description": "The append-only ledger (FR-INV-001).",
+        "description": "The append-only ledger (FR-INV-001) — one product's complete history.\n\nEvery movement is here, not only sales: the opening figure, each sheet arrival, each\ncorrection, each sale, and each reversal of a cancelled bill. `balance_after` is the\nstock the database actually held after that row, recorded when the movement was\nwritten — so the history is read from the ledger and never reconstructed backwards\nfrom today's total.\n\n`oldest_first=true` is what the History panel asks for, so the running balance reads\ndownwards.",
         "operationId": "list_movements_api_v1_inventory_movements_get",
         "parameters": [
           {
@@ -10116,6 +10667,16 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "oldest_first",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Oldest First",
+              "type": "boolean"
             }
           },
           {
@@ -10193,6 +10754,114 @@
           }
         },
         "summary": "List Movements",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/movements/report": {
+      "get": {
+        "description": "What moved in or out of stock on one day.\n\nThe per-product History answers \"what happened to this part\"; this answers \"what\nhappened today\", from the same append-only ledger — so the two can never disagree and\nnothing is recomputed from the current total.\n\n`kind=added` is every movement that **increased** stock: the opening figure, a\npurchase receipt, the owner's stock sheet, a correction upwards, a customer return, an\napplied import, and the reversal of a cancelled bill. `kind=sold` is `reason = 'sale'`\nalone — what customers took away.\n\nThree exclusions are structural rather than filtered, which is what makes them\nreliable: a **draft** writes no movement, a **reprint** writes no movement, and a\n**credit payment** moves money rather than goods. None of them can appear here\nwhatever this endpoint does.\n\n`stock_before` and `stock_after` are the ledger's own figures. The day is the\nbusiness-local one (`(created_at AT TIME ZONE …)::date`), the same boundary Daily\nBills uses, so the two screens agree on what \"today\" means.",
+        "operationId": "movement_report_api_v1_inventory_movements_report_get",
+        "parameters": [
+          {
+            "description": "Business-local date, YYYY-MM-DD",
+            "in": "query",
+            "name": "on_date",
+            "required": true,
+            "schema": {
+              "description": "Business-local date, YYYY-MM-DD",
+              "format": "date",
+              "title": "On Date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "added",
+              "pattern": "^(added|sold)$",
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MovementReportOut",
+                  "additionalProperties": true,
+                  "title": "Response Movement Report Api V1 Inventory Movements Report Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Movement Report",
         "tags": [
           "inventory"
         ]
@@ -10361,6 +11030,213 @@
           }
         },
         "summary": "Run Reconciliation",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/stock-entries": {
+      "post": {
+        "description": "Save a sheet of stock arrivals. **Adds to stock; never replaces it.**\n\nThe route declares `catalog.write` because a row may create a product;\n`StockEntryService` additionally re-asserts `inventory.adjust`, so a caller who may\nedit the catalog but not move stock is refused there rather than here.\n\nThe key is **claimed**, not merely required. Requiring the header and then ignoring it\nis worse than not asking for it: the caller is told the retry is safe while a second\npress books the delivery a second time, and because `stock_movements` can never be\ndeleted the only correction left is a third, opposite movement. `claim` runs before\nany stock is locked and `store_response` commits in the same transaction as the\nmovements, so a replay returns the first outcome verbatim (`§5.2.1`, `§5.2.8`).",
+        "operationId": "create_stock_entries_api_v1_inventory_stock_entries_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StockEntryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockEntriesOut",
+                  "additionalProperties": true,
+                  "title": "Response Create Stock Entries Api V1 Inventory Stock Entries Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Stock Entries",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/stock-entries:resolve": {
+      "get": {
+        "description": "What would saving this item name do — add a new product, or top up an existing one?\n\nRead-only, and answered by the **same** matcher the save uses, so the screen's\n\"will update existing stock\" can never promise something the save then does\ndifferently (FR-INV-008, the owner's stock sheet).",
+        "operationId": "resolve_stock_entry_api_v1_inventory_stock_entries_resolve_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "item",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Item",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockEntryMatchOut",
+                  "additionalProperties": true,
+                  "title": "Response Resolve Stock Entry Api V1 Inventory Stock Entries Resolve Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Stock Entry",
         "tags": [
           "inventory"
         ]
@@ -10581,6 +11457,7 @@
     },
     "/api/v1/invoices/{invoice_id}": {
       "get": {
+        "description": "One bill with its lines.\n\n`credit.read` is accepted as well as `reports.sales.read` because this is how the\nCredit Bills folder shows what a customer actually bought on an invoice. Every\nseeded role holding `credit.read` happens to hold `reports.sales.read` too, so this\nchanges nothing for them — it stops a *custom* credit-only role from seeing a\ncustomer's bill list it may read and then a 403 on every bill in it.\n\nNo widening of what is returned: the cost snapshot still needs `catalog.cost.read`\nand is omitted, not nulled (FR-CAT-004), and `InvoiceReader.get` predicates on the\ncaller's `business_id` so a cross-tenant id is a 404.",
         "operationId": "get_invoice_api_v1_invoices__invoice_id__get",
         "parameters": [
           {

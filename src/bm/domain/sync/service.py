@@ -505,6 +505,32 @@ class SyncService:
             "max_open_drafts": row.max_open_drafts,
         }
 
+    def _business_profile(self, ctx: AuthContext) -> dict[str, Any]:
+        """The shop's own heading, address and phones — **as configured, never invented**.
+
+        The on-screen bill header needs the same three values the printed bill already
+        gets from `print_payload.business`, and had no way to read them: the client
+        hardcoded the trading name and could show nothing else. Published here, from the
+        one source, so the screen and the paper cannot drift.
+
+        Every field may legitimately be empty. The owner has supplied only the trading
+        heading (OD-4 is a go-live gate for the legal name, full address and phone), and
+        an empty value renders as **nothing** — never a placeholder, never the address
+        from the reference workbook (FR-PRINT-016, Q-LEGAL-1: "Do not invent").
+        """
+        from bm.infra.db.models.tenancy import Business
+
+        business = self._session.execute(
+            select(Business).where(Business.id == ctx.business_id)
+        ).scalar_one_or_none()
+        if business is None:
+            return {"display_name": None, "address_lines": [], "phone_numbers": []}
+        return {
+            "display_name": business.display_name,
+            "address_lines": list(business.address_lines or ()),
+            "phone_numbers": list(business.phone_numbers or ()),
+        }
+
     def bootstrap(self, ctx: AuthContext) -> dict[str, Any]:
         """One call after login (`API-SPECIFICATION.md §3.12`).
 
@@ -531,6 +557,7 @@ class SyncService:
             "business_id": str(ctx.business_id),
             "branch_id": str(ctx.branch_id) if ctx.branch_id else None,
             "counter": counter,
+            "business": self._business_profile(ctx),
             "permissions": sorted(ctx.permissions),
             "money_policy": policy.as_payload(),
             "settings": client_settings,

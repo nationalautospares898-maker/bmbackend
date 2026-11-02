@@ -394,12 +394,19 @@ def test_after_assignment_bootstrap_resolves_the_counter_and_billing_can_start(
     tenant: Tenant,
     migration_session: Session,
 ) -> None:
-    """**The acceptance test for C-2.**
+    """**The acceptance test for C-2**, rewritten once signing in stopped leaving a gap.
 
-    Not "the column changed" but "the client is now told which counter it is", because
-    `counter: null` from this endpoint is the exact value that left the billing screen
-    with nothing to mount. Asserted before and after, so a system that was already
-    returning a counter could not make this pass.
+    It used to assert `counter: null` first — "the broken state this requirement is
+    about" — then assign, then assert a counter. That before-state no longer exists:
+    `AuthService._ensure_billing_counter` binds a device to the branch's default counter
+    on first sign-in, because the owner asked for the counter step to leave the workflow.
+
+    What still needs proving is the half that matters now, and it is a stronger claim
+    than the original: an operator can **move** a machine to a different counter and the
+    client is told, so the automatic default is a starting point rather than a ceiling.
+    The till therefore signs in (landing on C1 by itself), is assigned to C2 through the
+    real endpoint, and bootstrap reports C2. A system that ignored the endpoint would now
+    fail by reporting C1 — which the old shape could not have caught.
     """
     staff = create_user(
         migration_session,
@@ -425,25 +432,54 @@ def test_after_assignment_bootstrap_resolves_the_counter_and_billing_can_start(
         "X-Device-Id": str(device_id),
     }
 
+    # Signing in already made this machine able to bill, on the branch's default.
     before = api_client.get("/api/v1/sync/bootstrap", headers=till_headers)
     assert before.status_code == 200, before.text
-    assert before.json()["counter"] is None, "the broken state this requirement is about"
+    assert before.json()["counter"]["id"] == str(tenant.counter_id), (
+        "a signed-in computer should already be billing somewhere"
+    )
 
+    # Now move it somewhere else deliberately, which is the operator's decision and must
+    # outrank the automatic one.
+    second = _second_counter(migration_session, tenant)
     assert (
         api_client.put(
             f"/api/v1/admin/devices/{device_id}/counter",
             headers=headers,
-            json={"counter_id": str(tenant.counter_id)},
+            json={"counter_id": str(second)},
         ).status_code
         == 200
     )
+
+    # The machine signs in again, which is what the application has always told the
+    # operator to do after a reassignment (`COUNTERS.signInAgain`: "That computer needs to
+    # sign in again before it can bill").
+    #
+    # It is required rather than incidental, and the reason is precedence:
+    # `resolve_context` takes the first of the `X-Counter-Id` header, **the token's own
+    # claim**, and the device row. The till's token was minted at its first sign-in, when
+    # the automatic binding had just put it on C1, so that claim keeps answering C1 until
+    # a new token is issued. Before the binding existed the claim was null and the device
+    # row was reached immediately — which is why this step is new here and why it is
+    # spelled out: a reassignment lands within the 15-minute token life, or at once on a
+    # fresh sign-in.
+    relogin = api_client.post(
+        "/api/v1/auth/login",
+        json={
+            "username": staff.username,
+            "password": staff.password,
+            "device": {"id": str(device_id), "label": "Till PC"},
+        },
+    )
+    assert relogin.status_code == 200, relogin.text
+    till_headers["Authorization"] = f"Bearer {relogin.json()['access_token']}"
 
     after = api_client.get("/api/v1/sync/bootstrap", headers=till_headers)
     assert after.status_code == 200, after.text
     counter = after.json()["counter"]
     assert counter is not None, "bootstrap still cannot name the counter"
-    assert counter["id"] == str(tenant.counter_id)
-    assert counter["code"] == "C1"
+    assert counter["id"] == str(second), "the deliberate assignment did not take effect"
+    assert counter["code"] == "C2"
 
 
 def test_an_assignment_can_be_changed_to_another_counter(

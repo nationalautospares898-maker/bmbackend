@@ -42,9 +42,24 @@ from bm.infra.db.models.tenancy import Business
 #: is not a spreadsheet replica, the bill is.
 PRINT_COLUMNS = ("sl_no", "item", "quantity", "price", "total")
 
-#: The observed `Table 1` range is A1:E37 with **25** item rows. Unused rows print
-#: blank — never the reference's hand-typed `0` (FR-PRINT-018).
-ITEM_ROWS = 25
+#: How many numbered item rows the bill always has, however few items were sold.
+#:
+#: **15, matching the billing screen.** The owner's instruction after the second review
+#: was that the printed estimate "retain this same appearance" as the workspace, and the
+#: workspace shows 15 numbered rows (`gridRows.ts: VISIBLE_ROWS`). Screen and paper now
+#: agree, which is the point: a cashier looking at a full-looking sheet should not get a
+#: different-shaped piece of paper out of the printer.
+#:
+#: It was **25**, read from the owner's own `ANAS_1234_20260606_231456.xlsx`, whose
+#: `Table 1` range is A1:E37 with 25 numbered rows. That observation still stands and is
+#: why this is one named constant: if the owner wants the longer sheet back, 25 here
+#: restores it exactly and nothing else needs to change. 15 is also the better fit for
+#: the A5 portrait paper OD-6 specifies — 25 rows of `1.25em` crowd the grand total
+#: toward the foot of the page.
+#:
+#: More items than this is not a limit: the extra rows simply print (`fillerCount` floors
+#: at zero), so nothing is ever truncated.
+ITEM_ROWS = 15
 
 
 @dataclass(frozen=True, slots=True)

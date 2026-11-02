@@ -25,6 +25,7 @@ from bm.api.deps import (
 )
 from bm.api.v1.schemas.common import ResponseModel, StrictModel
 from bm.domain.auth.service import LoginResult
+from bm.domain.shared.errors import PermissionDenied
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -44,6 +45,12 @@ class DeviceInput(StrictModel):
 class LoginRequest(StrictModel):
     username: str
     password: str
+    device: DeviceInput
+
+
+class UnattendedRequest(StrictModel):
+    """No credentials — the device is the only thing the caller supplies."""
+
     device: DeviceInput
 
 
@@ -157,6 +164,54 @@ def login(
     result = service.login(
         username=body.username,
         password=body.password,
+        device_id=body.device.id,
+        device_label=str(body.device.label),
+        user_agent=user_agent,
+        ip=client_ip(request),
+    )
+    _set_refresh_cookie(response, result.refresh_token, settings=settings)
+    return _session_out(result)
+
+
+@router.post("/unattended", response_model=SessionOut)
+def unattended(
+    body: UnattendedRequest,
+    request: Request,
+    response: Response,
+    service: AuthServiceDep,
+    settings: SettingsDep,
+    user_agent: Annotated[str | None, Header()] = None,
+) -> SessionOut:
+    """Open a session with no password, when this server is configured to allow it.
+
+    The shop runs from one computer and wanted the application to open straight into
+    billing. This is how: the browser asks for a session, and a server that has been told
+    to vouch for it issues an ordinary one.
+
+    **Disabled unless somebody turns it on.** `BM_UNATTENDED_ACCESS` is off by default and
+    a server with it off refuses here, so no deployment acquires this by upgrading. When
+    it is on, `BM_UNATTENDED_USERNAME` names the account the session belongs to — the
+    audit trail still says who acted, and the row carries a reason recording that no
+    password was presented.
+
+    **Nothing downstream changes.** The response is the same `SessionOut` a login returns,
+    with the same access token, the same rotating refresh cookie, the same permissions and
+    the same device registration. Every other endpoint still demands that token and still
+    checks its permissions; a revoked device is still refused here and everywhere else.
+
+    **The risk, stated plainly:** anyone who can reach this endpoint gets a working
+    session. Enable it only where the network is already controlled — bound to localhost,
+    or on a LAN the shop owns — never on a server reachable from the open internet.
+    """
+    if not settings.unattended_access:
+        raise PermissionDenied(
+            "This server is not configured for unattended access. Sign in instead."
+        )
+
+    result = service.unattended_session(
+        # `_unattended_access_needs_an_account` guarantees this is set whenever the flag
+        # is on, so the fallback is unreachable and exists only to satisfy the type.
+        username=(settings.unattended_username or "").strip(),
         device_id=body.device.id,
         device_label=str(body.device.label),
         user_agent=user_agent,

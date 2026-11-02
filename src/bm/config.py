@@ -14,7 +14,7 @@ from __future__ import annotations
 import functools
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "test", "staging", "production"]
@@ -55,6 +55,28 @@ class Settings(BaseSettings):
     refresh_token_ttl_days: int = Field(default=30, ge=1, le=365)
     password_pepper: SecretStr
     ip_hash_pepper: SecretStr
+
+    # --- unattended access -----------------------------------------------------
+    #
+    # Lets a browser obtain a session **without anybody typing a password**, so the shop
+    # PC opens straight into billing. Nothing else about authentication changes: the
+    # session it issues is an ordinary one, every endpoint still demands a valid token,
+    # every permission is still checked, the tenant scope still comes from the token, and
+    # a revoked device is still refused.
+    #
+    # **Off by default, and that default is the security control.** With this on, anyone
+    # who can reach the server gets a working session — there is no second factor and no
+    # prompt to fail. It is therefore safe only where network access is already
+    # controlled: a machine bound to `127.0.0.1`, or a LAN the shop owns. Exposing a
+    # server with this enabled to the open internet publishes the shop's customers,
+    # prices, takings and the ability to issue bills.
+    #
+    # `main.py` logs a warning on every startup while it is on, so a deployment cannot
+    # drift into it unnoticed.
+    unattended_access: bool = False
+    #: Which account an unattended session belongs to. Required when the flag is on —
+    #: the session is a real user's, so the audit trail still names who acted.
+    unattended_username: str | None = None
 
     # --- http -----------------------------------------------------------------
     cors_allowed_origins: str = ""
@@ -127,6 +149,23 @@ class Settings(BaseSettings):
         if upper not in allowed:
             raise ValueError(f"BM_LOG_LEVEL must be one of {sorted(allowed)}")
         return upper
+
+    @model_validator(mode="after")
+    def _unattended_access_needs_an_account(self) -> Settings:
+        """Enabling unattended access without naming an account is a misconfiguration.
+
+        Refused at startup rather than at the first request: a server that boots and then
+        fails every attempt to open the application is far harder to diagnose than one
+        that says why it will not boot. The session an unattended request issues belongs
+        to a real user, so the audit trail still names who acted — which is only possible
+        if the account is configured.
+        """
+        if self.unattended_access and not (self.unattended_username or "").strip():
+            raise ValueError(
+                "BM_UNATTENDED_ACCESS is on, so BM_UNATTENDED_USERNAME must name the "
+                "account those sessions belong to."
+            )
+        return self
 
     @property
     def cors_origins(self) -> list[str]:

@@ -330,9 +330,13 @@ class ReportService:
                   LEFT JOIN inventory_balances b
                          ON b.product_id = p.id AND b.branch_id = :branch_id
                  WHERE p.business_id = :business_id AND p.is_active
+                   -- Strictly below the product's own minimum, identical to
+                   -- `InventoryService.balances(low_stock_only=True)`. The report and the
+                   -- Stock screen answer the same question and must not disagree about a
+                   -- part sitting exactly on its threshold (FR-INV-008).
                    AND (NOT :low_only
                         OR (p.reorder_level IS NOT NULL
-                            AND coalesce(b.quantity, 0) <= p.reorder_level))
+                            AND coalesce(b.quantity, 0) < p.reorder_level))
                  ORDER BY p.name
                  LIMIT 500
                 """

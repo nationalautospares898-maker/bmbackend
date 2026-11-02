@@ -33,19 +33,35 @@ on. The full-stack end-to-end suite found it on 31 October 2026; it is the first
 this project that talks to a real server, and the stubbed suites all stub this response
 with a counter present, so none of them could have.
 
-What is deliberately *not* fixed here
--------------------------------------
+How a device gets its counter now — superseded 2 November 2026
+--------------------------------------------------------------
 
-A device registered by `POST /auth/login` has `counter_id = NULL` — `register_device`
-sets `branch_id` and deliberately not `counter_id` — and there is **no endpoint to assign
-one**. `GET /admin/counters` and `PUT /admin/counters/<id>` appear in
-`API-SPECIFICATION.md` and are not implemented, and C-2 "counter selection"
-(`TRACEABILITY.md`) has neither an endpoint nor a screen. So an *unprovisioned* device
-still cannot bill, by design gap rather than by defect. That is an unimplemented
-requirement and is reported as one; the honest behaviour for it — saying so plainly
-instead of spinning — is asserted by
-`test_a_device_with_no_counter_gets_null_rather_than_a_guess` here and by the
-"not assigned to a counter" panel in `AppShell`.
+This file used to end with a section headed "what is deliberately *not* fixed here": a
+device registered by `POST /auth/login` had `counter_id = NULL`, nothing assigned one, and
+so an unprovisioned machine could authenticate and then not bill. The honest behaviour for
+that state — `null` rather than a guess — was asserted by a test named
+`test_a_device_with_no_counter_gets_null_rather_than_a_guess`, whose reasoning was that
+picking "the branch's only counter" would be a business decision nobody had made, and
+that in a two-till shop it would silently attribute one cashier's takings to the other's
+till.
+
+**The owner has now made that decision.** They run the shop from one computer and asked
+for the counter step to leave the workflow entirely, so `AuthService._ensure_billing_counter`
+binds a device to the branch's default counter on first sign-in. The replacement test
+below asserts the new answer and keeps the old concern as a boundary rather than
+discarding it, because the concern was correct and has not gone away:
+
+* an assignment somebody made **on purpose is never overwritten** — the `UPDATE` carries a
+  `counter_id IS NULL` guard — so a two-till shop that assigns its tills keeps them;
+* a **closed** counter is never chosen;
+* the binding is **audited** as `device.counter_assigned` with a reason recording that the
+  server chose it, so the trail still answers whose takings a sale landed in.
+
+The residual limitation is stated plainly in `FINAL-CLIENT-CHANGES-ACCEPTANCE-REPORT.md`:
+a shop that later adds a **second** till must assign that machine through
+`PUT /admin/devices/{id}/counter`, which is still live and still owner-only, because the
+automatic choice cannot know which of two counters a new computer is standing at.
+`tests/api/test_counter_free_billing.py` holds all of this.
 """
 
 from __future__ import annotations
@@ -144,21 +160,19 @@ def test_an_explicit_counter_header_still_wins(
     assert body["counter"]["code"] == "C2"
 
 
-def test_a_device_with_no_counter_gets_null_rather_than_a_guess(
-    api_client: TestClient, owner: UserFixture, migration_session: Session
+def test_a_device_with_no_counter_is_made_ready_to_bill_on_sign_in(
+    api_client: TestClient, owner: UserFixture, tenant: Tenant, migration_session: Session
 ) -> None:
-    """The unprovisioned counter PC, asserted rather than papered over.
+    """The unprovisioned counter PC, now repaired by signing in rather than reported.
 
-    `POST /auth/login` enrols a device with a `branch_id` and deliberately **no**
-    `counter_id`, and nothing assigns one afterwards: `GET /admin/counters` and
-    `PUT /admin/counters/<id>` are specified but unimplemented, and C-2 "counter
-    selection" has neither an endpoint nor a screen. So this is the state every
-    brand-new counter PC is actually in.
+    This replaces `test_a_device_with_no_counter_gets_null_rather_than_a_guess`, and the
+    header of this module records why: the owner asked for the counter step to leave the
+    workflow, which made "the branch's default counter" a decision they had made rather
+    than one the server was inventing.
 
-    The server must **not** invent a counter here. Picking "the branch's only counter"
-    would be a business decision nobody made, and in a two-till shop it would silently
-    attribute one cashier's takings to the other's till. `null` is the honest answer, and
-    the client is responsible for saying so — which it now does, instead of spinning.
+    The guess the old test guarded against is still not made **blindly** — a deliberate
+    assignment survives, and a closed counter is refused — but the default is now chosen
+    and persisted, so a brand-new machine bills immediately.
     """
     migration_session.execute(
         text("UPDATE devices SET counter_id = NULL WHERE id = :d"), {"d": owner.device_id}
@@ -168,9 +182,9 @@ def test_a_device_with_no_counter_gets_null_rather_than_a_guess(
     token = _login(api_client, owner)
     body = _bootstrap(api_client, token, device_id=owner.device_id, counter_id=None)
 
-    assert body["counter"] is None
-    # Everything else still arrives, so the client can explain the problem rather than
-    # failing to start at all.
+    assert body["counter"] is not None, "a signed-in computer must be able to bill"
+    assert uuid.UUID(body["counter"]["id"]) == tenant.counter_id
+    # Everything else still arrives exactly as before.
     assert body["money_policy"]["version"] == 1
     assert "catalog.read" in body["permissions"]
 

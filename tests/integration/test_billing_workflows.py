@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from bm.domain.auth.permissions import SystemRole
+from bm.domain.sales.print_payload import ITEM_ROWS
 from tests.fixtures import Tenant, UserFixture, create_user
 
 pytestmark = pytest.mark.db
@@ -1603,7 +1604,16 @@ def test_the_print_payload_matches_the_workbook_structure(
     tenant: Tenant,
 ) -> None:
     """T3-10 / OD-5. Columns, label, capacity and the absent fields all come from the
-    inspected workbook."""
+    inspected workbook.
+
+    **Capacity is 15, not the workbook's 25, and that is the owner's instruction.** They
+    asked for the printed estimate to keep the billing workspace's appearance, and the
+    workspace shows fifteen numbered rows. `print_payload.ITEM_ROWS` carries the full
+    reasoning and the note that 25 restores the longer sheet exactly if they change their
+    mind. It is asserted against the constant rather than a literal so the two cannot
+    drift apart — a hardcoded `15` here would need editing in step with every change and
+    would quietly stop checking anything if someone edited only one of them.
+    """
     payload = api_client.post(
         "/api/v1/sales:finalize",
         headers={**owner_headers, **_key()},
@@ -1613,7 +1623,7 @@ def test_the_print_payload_matches_the_workbook_structure(
     assert payload["columns"] == ["sl_no", "item", "quantity", "price", "total"]
     # `ESTIMATE` for cash and credit alike (OD-24, FR-PRINT-021).
     assert payload["document_title"] == "ESTIMATE"
-    assert payload["item_row_capacity"] == 25
+    assert payload["item_row_capacity"] == ITEM_ROWS == 15
     # `null`, not `"0.00"`, so the client renders no tax row at all (ADR-020).
     assert payload["totals"]["tax"] is None
     assert payload["tax_mode"] == "estimate_only"
@@ -1621,6 +1631,35 @@ def test_the_print_payload_matches_the_workbook_structure(
     assert payload["date_format"] == "MM-DD-YYYY"
     # OD-6 proposed profile.
     assert payload["print_profile"] == "a5_portrait"
+
+
+def test_a_one_item_bill_still_reports_room_for_fifteen_rows(
+    api_client: TestClient,
+    owner_headers: dict[str, str],
+    stocked: dict[str, Any],
+    tenant: Tenant,
+) -> None:
+    """The owner's "always at least 15 numbered rows", from the server's side.
+
+    The client draws the rows, but the **count** is the server's decision and travels in
+    the payload — so this is where the requirement is actually enforceable. A single-line
+    bill must still declare room for fifteen, which is what keeps the grand total in the
+    same physical place on every estimate and makes a pre-printed pad usable.
+
+    The padding itself (numbered, otherwise blank) is asserted in
+    `InvoicePrintLayout.test.tsx`, and the rendered A5 output is checked in the browser.
+    """
+    payload = api_client.post(
+        "/api/v1/sales:finalize",
+        headers={**owner_headers, **_key()},
+        json=_finalize_body(tenant, stocked["product"]["id"], quantity="1.000"),
+    ).json()["print_payload"]
+
+    assert len(payload["lines"]) == 1
+    assert payload["item_row_capacity"] == 15
+    # The capacity is a floor for the printed sheet, never a cap on what was sold: the
+    # layout pads up to it and prints straight past it. Nothing here truncates.
+    assert payload["item_row_capacity"] >= len(payload["lines"])
 
 
 def test_the_credit_block_appears_only_for_a_credit_bill(

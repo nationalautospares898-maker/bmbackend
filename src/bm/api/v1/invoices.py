@@ -26,6 +26,7 @@ from bm.api.deps import (
     ReadSession,
     WriteSession,
     require,
+    require_any,
 )
 from bm.api.v1.schemas.common import StrictModel
 from bm.api.v1.schemas.responses import CancelOut, InvoiceListOut, InvoiceOut, PrintPayloadOut
@@ -101,8 +102,23 @@ def list_invoices(
 def get_invoice(
     invoice_id: uuid.UUID,
     session: ReadSession,
-    ctx: Annotated[CurrentContext, Depends(require(Permission.REPORTS_SALES_READ))],
+    ctx: Annotated[
+        CurrentContext,
+        Depends(require_any(Permission.REPORTS_SALES_READ, Permission.CREDIT_READ)),
+    ],
 ) -> dict[str, Any]:
+    """One bill with its lines.
+
+    `credit.read` is accepted as well as `reports.sales.read` because this is how the
+    Credit Bills folder shows what a customer actually bought on an invoice. Every
+    seeded role holding `credit.read` happens to hold `reports.sales.read` too, so this
+    changes nothing for them — it stops a *custom* credit-only role from seeing a
+    customer's bill list it may read and then a 403 on every bill in it.
+
+    No widening of what is returned: the cost snapshot still needs `catalog.cost.read`
+    and is omitted, not nulled (FR-CAT-004), and `InvoiceReader.get` predicates on the
+    caller's `business_id` so a cross-tenant id is a 404.
+    """
     record = InvoiceReader(session).get(ctx, invoice_id)
     return invoice_dict(record, may_see_cost=ctx.has(Permission.CATALOG_COST_READ))
 

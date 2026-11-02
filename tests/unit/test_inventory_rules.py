@@ -357,13 +357,69 @@ def test_balances_can_be_narrowed_to_specific_products(
     migration_session.commit()
 
     everything = service.balances(_ctx(tenant))
-    assert any(row[0] == product for row in everything)
+    assert any(row.product_id == product for row in everything)
 
     narrowed = service.balances(_ctx(tenant), product_ids=[product])
-    assert [row[0] for row in narrowed] == [product]
+    assert [row.product_id for row in narrowed] == [product]
 
     absent = service.balances(_ctx(tenant), product_ids=[uuid.uuid4()])
     assert absent == []
+
+
+def test_a_balance_row_carries_the_price_and_part_code_the_stock_screen_shows(
+    service: InventoryService, tenant: Tenant, product: uuid.UUID, migration_session: Session
+) -> None:
+    """The Stock screen renders Item · Price · Min Qty · Stock Qty from **one** request.
+
+    Without the price on this row the screen would need a second call per product just to
+    fill a column, so it is part of the row's contract rather than an incidental extra.
+    """
+    _stock(service, tenant, product, "5")
+    migration_session.execute(
+        text("UPDATE products SET default_selling_price = 30, reorder_level = 50 WHERE id = :p"),
+        {"p": product},
+    )
+    migration_session.commit()
+
+    row = next(r for r in service.balances(_ctx(tenant)) if r.product_id == product)
+    assert row.default_selling_price == Decimal("30.0000")
+    assert row.reorder_level == Decimal("50.000")
+    assert row.quantity == Decimal("5.000")
+    # Never the cost price: it is gated on `catalog.cost.read` and absent from this shape.
+    assert not hasattr(row, "last_cost_price")
+
+
+@pytest.mark.parametrize(
+    "quantity,reorder,expected_low",
+    [
+        ("4", "10", True),  # under the minimum
+        ("9", "10", True),  # still under
+        # The boundary. **Exactly at** the minimum is NOT low: the owner's rule is "goes
+        # below the minimum quantity", so 10 of a part whose minimum is 10 is at its
+        # threshold, not under it. This is the case the `<=`/`<` choice turns on, which is
+        # why it is asserted rather than left to the two obvious cases either side.
+        ("10", "10", False),
+        ("11", "10", False),  # above
+    ],
+)
+def test_low_stock_is_strictly_below_the_products_own_minimum(
+    service: InventoryService,
+    tenant: Tenant,
+    product: uuid.UUID,
+    migration_session: Session,
+    quantity: str,
+    reorder: str,
+    expected_low: bool,
+) -> None:
+    _stock(service, tenant, product, quantity)
+    migration_session.execute(
+        text("UPDATE products SET reorder_level = :r WHERE id = :p"),
+        {"p": product, "r": Decimal(reorder)},
+    )
+    migration_session.commit()
+
+    low = [row.product_id for row in service.balances(_ctx(tenant), low_stock_only=True)]
+    assert (product in low) is expected_low
 
 
 def test_balances_can_be_narrowed_to_what_is_running_low(
@@ -388,7 +444,7 @@ def test_balances_can_be_narrowed_to_what_is_running_low(
     )
     migration_session.commit()
     low = service.balances(_ctx(tenant), low_stock_only=True)
-    assert [row[0] for row in low] == [product]
+    assert [row.product_id for row in low] == [product]
 
 
 def test_balances_requires_catalog_read(tenant: Tenant, service: InventoryService) -> None:

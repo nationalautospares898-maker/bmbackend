@@ -730,7 +730,20 @@ class SalesService:
     def _low_stock_warnings(
         self, ctx: AuthContext, branch_id: uuid.UUID, resolved: list[ResolvedLine]
     ) -> list[dict[str, object]]:
-        """Rides along with the **successful** sale. Never a reason to retry (§4.3)."""
+        """Rides along with the **successful** sale. Never a reason to retry (§4.3).
+
+        ⚠️ `<=` here is deliberate and is **not** the Stock screen's rule.
+        `LOW_STOCK_AFTER_SALE` is documented as firing when stock "fell **to or** below
+        `reorder_level`" (`docs/API-SPECIFICATION.md §4.3`), so a part that has just
+        landed exactly on its minimum warns — which is the useful moment to say "reorder
+        this". The low-stock *listing* asks a different question, "what is short right
+        now", and uses `<` (`InventoryService.balances`,
+        `CatalogService.ProductView.is_low_stock`, `ReportService.stock_position`).
+
+        Do not "fix" the inconsistency by aligning this to `<`: that would change a
+        published response shape's trigger condition. If the owner wants the two
+        unified, it is an API contract change with its own decision record.
+        """
         low: list[dict[str, str]] = []
         for line in resolved:
             if line.reorder_level is None:

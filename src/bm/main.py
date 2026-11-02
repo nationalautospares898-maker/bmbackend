@@ -98,6 +98,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
 
+    if settings.unattended_access:
+        # Logged on every start, at WARNING, because this is the one setting that makes
+        # the application reachable without a password. A deployment must not be able to
+        # drift into it unnoticed, and an operator reading the log should be told what it
+        # means rather than just that a flag is on.
+        logger.warning(
+            "unattended_access_enabled",
+            extra={
+                "account": settings.unattended_username,
+                "effect": (
+                    "anyone who can reach this server can obtain a session without a password"
+                ),
+                "safe_only_if": (
+                    "the server is bound to localhost or a private network the shop "
+                    "controls; never expose it to the internet with this on"
+                ),
+            },
+        )
+
     # Outermost first.
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(

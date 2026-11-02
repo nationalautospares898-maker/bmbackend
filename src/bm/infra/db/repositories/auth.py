@@ -25,7 +25,7 @@ from bm.infra.db.models.identity import (
     RolePermission,
     User,
 )
-from bm.infra.db.models.tenancy import Branch, Business
+from bm.infra.db.models.tenancy import Branch, Business, Counter
 from bm.infra.db.rows import rows_affected
 
 
@@ -260,6 +260,52 @@ class AuthRepository:
     def touch_device(self, device_id: uuid.UUID) -> None:
         self._session.execute(
             update(Device).where(Device.id == device_id).values(last_seen_at=func.now())
+        )
+
+    def default_counter_for(
+        self, business_id: uuid.UUID, branch_id: uuid.UUID | None
+    ) -> uuid.UUID | None:
+        """The counter a newly enrolled PC should bill as, or `None` if the branch has none.
+
+        Ordered by `code` so the answer is **stable**: the same machine resolves to the
+        same counter on every login, and two machines enrolling at once agree. Picking
+        by `created_at` would do as well until two counters shared a timestamp, and
+        picking arbitrarily would let a shop's takings land in a different till each
+        morning. Only active counters are eligible — a closed one cannot accept a sale.
+        """
+        query = select(Counter.id).where(
+            Counter.business_id == business_id, Counter.is_active.is_(True)
+        )
+        if branch_id is not None:
+            # Branch decides which stock and which invoice series a sale draws on, so a
+            # counter from another branch is never a valid answer here.
+            query = query.where(Counter.branch_id == branch_id)
+        return self._session.execute(query.order_by(Counter.code).limit(1)).scalar_one_or_none()
+
+    def bind_device_counter(
+        self, device_id: uuid.UUID, business_id: uuid.UUID, *, counter_id: uuid.UUID
+    ) -> bool:
+        """Point an unassigned device at `counter_id`. Returns whether this call did it.
+
+        `counter_id IS NULL` in the `WHERE` clause is what makes this safe to call on
+        every login: an operator's deliberate assignment is never overwritten, and two
+        concurrent logins cannot fight — the second sees zero rows affected and simply
+        reads back what the first wrote. A revoked device is excluded, so logging in
+        again can never hand a revoked machine a route back to billing.
+        """
+        return bool(
+            rows_affected(
+                self._session.execute(
+                    update(Device)
+                    .where(
+                        Device.id == device_id,
+                        Device.business_id == business_id,
+                        Device.counter_id.is_(None),
+                        Device.status == DeviceStatus.ACTIVE,
+                    )
+                    .values(counter_id=counter_id)
+                )
+            )
         )
 
     def revoke_device(

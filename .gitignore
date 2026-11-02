@@ -12,6 +12,24 @@
 secrets/
 credentials.json
 
+# `scripts/seed_dev.py` is kept local and is deliberately NOT published.
+#
+# It hard-codes the password it seeds the `owner` account with, and that password is in
+# live use: verified on 2026-11-02 against the owner's own `bm` database, where
+# `verify_password(DEV_PASSWORD, users.password_hash)` returns true for `owner`. These
+# repositories are public, so publishing the file would publish a working credential for
+# a real install — the one thing a public release must never do.
+#
+# This is a departure from the pattern the other seeders follow, and the difference is the
+# point: `scripts/seed_e2e_tenant.py` is committed precisely because its password
+# (`e2e-only-not-a-real-password-01`) is declared not-real and unlocks nothing.
+#
+# To publish it later, do either and then delete this rule:
+#   * change the `owner` password on the live install, so the seeded default unlocks
+#     nothing; or
+#   * read the password from an environment variable instead of hard-coding it.
+scripts/seed_dev.py
+
 # --- Owner business records --------------------------------------------------
 # The owner's original bill workbook is their business record, not a project
 # artifact. Its contents are specified in docs/PHASE-2-CLOSURE-ADDENDUM-2.md.

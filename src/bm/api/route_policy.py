@@ -38,6 +38,15 @@ PUBLIC_ROUTES: dict[str, str] = {
     "/docs/oauth2-redirect": "docs support route; mounted at the root by FastAPI",
     "/api/v1/auth/login": "issues the first token; rate-limited and subject to lockout",
     "/api/v1/auth/refresh": "cookie-authenticated rotation, bound to X-Device-Id",
+    # Public by necessity — it is how a session begins when the shop has chosen not to
+    # type a password — but **refused unless `BM_UNATTENDED_ACCESS` is on**, which it is
+    # not by default. Listing it here is the declaration that it takes no token; what it
+    # hands out is an ordinary session whose permissions every other route still checks.
+    # See `AuthService.unattended_session` for what this does and does not give up.
+    "/api/v1/auth/unattended": (
+        "issues a session with no password; disabled unless the operator enables it, "
+        "and bound to the device so revocation still works"
+    ),
     "/api/v1/auth/logout": "revokes the caller's own session only",
 }
 
