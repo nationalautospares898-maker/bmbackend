@@ -29,7 +29,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from bm.domain.auth.permissions import SystemRole
+from bm.domain.auth.permissions import Permission, SystemRole, permissions_for_role
+from bm.domain.sales.amend import AmendCommand, AmendLine, InvoiceAmendService
+from bm.domain.settings.service import SettingsService
+from bm.domain.shared.clock import SystemClock
+from bm.domain.shared.context import AuthContext
+from bm.domain.shared.errors import EmptySale, OversellNotPermitted, ValidationFailed
 from tests.fixtures import Tenant, UserFixture, create_user
 
 pytestmark = pytest.mark.db
@@ -918,3 +923,239 @@ def test_the_edit_is_audited_with_its_reason(
     assert row.reason == "Customer took one more item"
     assert row.before_value["total"] == "200.00"
     assert row.after_value["total"] == "300.00"
+
+
+# --- line-level refusals --------------------------------------------------------
+
+
+def test_an_unknown_product_in_a_line_is_refused(
+    api_client: TestClient, headers: dict[str, str], billed: dict[str, Any]
+) -> None:
+    """A line cannot attach to a product that does not exist (or belongs to another
+    tenant) — caught server-side, not merely assumed from a client-supplied name."""
+    response = _amend(
+        api_client,
+        headers,
+        billed["invoice"]["id"],
+        version=1,
+        lines=[{"product_id": str(uuid.uuid4()), "quantity": "1.000", "unit_price": "100.0000"}],
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_a_zero_quantity_line_is_refused(
+    api_client: TestClient, headers: dict[str, str], billed: dict[str, Any]
+) -> None:
+    response = _amend(
+        api_client,
+        headers,
+        billed["invoice"]["id"],
+        version=1,
+        lines=[{"product_id": billed["product_id"], "quantity": "0.000", "unit_price": "100.0000"}],
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_a_fractional_quantity_on_a_whole_unit_product_is_refused(
+    api_client: TestClient, headers: dict[str, str], billed: dict[str, Any]
+) -> None:
+    """`billed`'s product is sold in NOS (`allows_fraction=False`); half a unit is not a
+    quantity this product can be edited to."""
+    response = _amend(
+        api_client,
+        headers,
+        billed["invoice"]["id"],
+        version=1,
+        lines=[{"product_id": billed["product_id"], "quantity": "1.500", "unit_price": "100.0000"}],
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_an_oversold_edit_without_the_override_permission_is_refused(
+    api_client: TestClient,
+    migration_session: Session,
+    tenant: Tenant,
+    billed: dict[str, Any],
+) -> None:
+    """A custom role holding `billing.sale.edit` alone — not a system role, since both
+    owner and manager carry the override permission too — hits the plain refusal rather
+    than the reasoned-override path."""
+    role_id = uuid.uuid4()
+    migration_session.execute(
+        text(
+            "INSERT INTO roles (id, business_id, code, name, is_system)"
+            " VALUES (:id, :business_id, 'edit_only', 'Edit only', false)"
+        ),
+        {"id": role_id, "business_id": tenant.business_id},
+    )
+    migration_session.execute(
+        text("INSERT INTO role_permissions (role_id, permission_code) VALUES (:role_id, :code)"),
+        {"role_id": role_id, "code": str(Permission.BILLING_SALE_EDIT)},
+    )
+    migration_session.commit()
+    editor = create_user(
+        migration_session, tenant, username="edit-only", role_id=role_id, all_branches=True
+    )
+
+    response = _amend(
+        api_client,
+        _headers(api_client, editor),
+        billed["invoice"]["id"],
+        version=1,
+        # 18 remain in stock (20 purchased, 2 on the bill); 500 is well beyond it.
+        lines=[
+            {"product_id": billed["product_id"], "quantity": "500.000", "unit_price": "100.0000"}
+        ],
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "INSUFFICIENT_STOCK"
+
+
+def test_an_oversold_edit_with_the_override_permission_and_a_reason_succeeds(
+    api_client: TestClient, headers: dict[str, str], billed: dict[str, Any]
+) -> None:
+    """The owner holds the override permission; a real reason of 10+ characters lets the
+    edit through even though it outruns recorded stock."""
+    body = {
+        "expected_version": 1,
+        "reason": "Customer took the rest of the shelf",
+        "lines": [
+            {"product_id": billed["product_id"], "quantity": "500.000", "unit_price": "100.0000"}
+        ],
+        "oversell_reason": "Owner approved selling past the recorded balance",
+    }
+    response = api_client.post(
+        f"/api/v1/invoices/{billed['invoice']['id']}:amend",
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == "50000.00"
+
+
+def test_revisions_of_another_tenants_invoice_is_a_404(
+    api_client: TestClient,
+    headers: dict[str, str],
+    billed: dict[str, Any],
+    migration_session: Session,
+) -> None:
+    """The read side gets the same cross-tenant refusal as the write side."""
+    from tests.fixtures import create_tenant
+
+    other = create_tenant(migration_session)
+    intruder = create_user(
+        migration_session,
+        other,
+        username="amend-reader-intruder",
+        role=SystemRole.OWNER,
+        all_branches=True,
+    )
+    response = api_client.get(
+        f"/api/v1/invoices/{billed['invoice']['id']}/revisions",
+        headers=_headers(api_client, intruder),
+    )
+    assert response.status_code == 404, response.text
+
+
+# --- domain-level refusals (below what the API schema already enforces) --------
+#
+# `AmendRequest` mirrors these three checks exactly — `reason: Field(min_length=5)`,
+# `lines: Field(min_length=1)`, and `str_strip_whitespace=True` ahead of
+# `oversell_reason`'s own `min_length=10` — so no HTTP request can reach the
+# corresponding branch in `InvoiceAmendService.amend`. They stay as real guards for any
+# other caller of the service, and are exercised directly here rather than papered over.
+
+
+def _ctx(tenant: Tenant, user: UserFixture, role: SystemRole = SystemRole.OWNER) -> AuthContext:
+    return AuthContext(
+        user_id=user.id,
+        business_id=tenant.business_id,
+        branch_id=tenant.branch_id,
+        counter_id=tenant.counter_id,
+        device_id=user.device_id,
+        role=str(role),
+        permissions=frozenset(str(p) for p in permissions_for_role(role)),
+        token_id="amend-domain-test",
+        business_timezone=tenant.timezone,
+        full_name=user.username.title(),
+    )
+
+
+def test_domain_refuses_a_reason_below_the_floor(
+    migration_session: Session, tenant: Tenant, billed: dict[str, Any]
+) -> None:
+    owner = create_user(migration_session, tenant, username="domain-owner", all_branches=True)
+    policy = SettingsService(migration_session).money_policy(tenant.business_id, tenant.branch_id)
+    service = InvoiceAmendService(migration_session, SystemClock())
+    with pytest.raises(ValidationFailed):
+        service.amend(
+            _ctx(tenant, owner),
+            AmendCommand(
+                invoice_id=uuid.UUID(billed["invoice"]["id"]),
+                expected_version=1,
+                reason="hi",
+                lines=[
+                    AmendLine(
+                        product_id=uuid.UUID(billed["product_id"]),
+                        quantity=Decimal("1"),
+                        unit_price=Decimal("100"),
+                    )
+                ],
+            ),
+            policy=policy,
+        )
+
+
+def test_domain_refuses_an_empty_line_set(
+    migration_session: Session, tenant: Tenant, billed: dict[str, Any]
+) -> None:
+    owner = create_user(migration_session, tenant, username="domain-owner-2", all_branches=True)
+    policy = SettingsService(migration_session).money_policy(tenant.business_id, tenant.branch_id)
+    service = InvoiceAmendService(migration_session, SystemClock())
+    with pytest.raises(EmptySale):
+        service.amend(
+            _ctx(tenant, owner),
+            AmendCommand(
+                invoice_id=uuid.UUID(billed["invoice"]["id"]),
+                expected_version=1,
+                reason="Customer took everything back",
+                lines=[],
+            ),
+            policy=policy,
+        )
+
+
+def test_domain_refuses_a_present_but_blank_oversell_reason_on_a_decrease(
+    migration_session: Session, tenant: Tenant, billed: dict[str, Any]
+) -> None:
+    """The API schema strips and then length-checks `oversell_reason`, so a caller that
+    skips the schema is the only way to present a non-`None`, whitespace-only value —
+    exactly the gap this branch exists to catch."""
+    owner = create_user(migration_session, tenant, username="domain-owner-3", all_branches=True)
+    policy = SettingsService(migration_session).money_policy(tenant.business_id, tenant.branch_id)
+    service = InvoiceAmendService(migration_session, SystemClock())
+    with pytest.raises(OversellNotPermitted):
+        service.amend(
+            _ctx(tenant, owner),
+            AmendCommand(
+                invoice_id=uuid.UUID(billed["invoice"]["id"]),
+                expected_version=1,
+                reason="Customer returned one unit, pricier replacement",
+                lines=[
+                    AmendLine(
+                        # Quantity drops 2 -> 1 (a stock *decrease*, no increase at all),
+                        # while a higher price keeps the new total >= the 200 already
+                        # paid — isolating the oversell-reason check from the separate
+                        # paid-total rule.
+                        product_id=uuid.UUID(billed["product_id"]),
+                        quantity=Decimal("1"),
+                        unit_price=Decimal("250"),
+                    )
+                ],
+                oversell_reason="   ",
+            ),
+            policy=policy,
+        )
