@@ -886,20 +886,49 @@ def cmd_verify(args: argparse.Namespace) -> int:
             # Read from `information_schema.column_privileges`, which lists only the
             # columns actually granted, so a new column defaults to "not permitted" and a
             # deliberate addition has to be made here too.
+            # `invoices`' set is migration 0024's `_INVOICE_EDITABLE_COLUMNS`, duplicated
+            # here rather than imported — same reasoning 0024 gives for duplicating 0005's
+            # synchronisation: a verification script importing a migration module couples
+            # two things that must each stand alone, and the list is small enough that
+            # duplicating it is the cheaper risk. If a future migration adds another
+            # editable column without updating this set, this check is designed to catch
+            # that as a reported EXTRA rather than pass silently.
+            invoices_expected = {
+                "status",
+                "cancelled_at",
+                "cancelled_by_user_id",
+                "cancellation_reason",
+                "amount_paid",
+                "payment_status",
+                "updated_at",
+                "customer_id",
+                "customer_name_snapshot",
+                "customer_business_name_snapshot",
+                "vehicle_number_snapshot",
+                "mechanic_name_snapshot",
+                "phone_snapshot",
+                "notes",
+                "due_date",
+                "subtotal",
+                "discount_total",
+                "tax_total",
+                "rounding_adjustment",
+                "total",
+                "cost_total",
+                "oversell_override",
+                "oversell_reason",
+                "version",
+            }
+            # `invoice_items` is no longer a column-level grant: migration 0024 moved it to
+            # a table-level `GRANT ... UPDATE` (the amend path replaces a line wholesale,
+            # with its prior state preserved in `invoice_revision_items`), so every column
+            # of the table carries the privilege. Derived from the ORM metadata rather than
+            # hand-listed, so a column added later is covered automatically.
+            invoice_items_expected = set(Base.metadata.tables["invoice_items"].columns.keys())
+
             for table, expected in (
-                (
-                    "invoices",
-                    {
-                        "status",
-                        "cancelled_at",
-                        "cancelled_by_user_id",
-                        "cancellation_reason",
-                        "amount_paid",
-                        "payment_status",
-                        "updated_at",
-                    },
-                ),
-                ("invoice_items", {"returned_quantity"}),
+                ("invoices", invoices_expected),
+                ("invoice_items", invoice_items_expected),
                 ("payments", set()),
                 ("stock_movements", set()),
                 ("audit_logs", set()),
@@ -1238,18 +1267,20 @@ def cmd_verify(args: argparse.Namespace) -> int:
             for label, sql in (
                 ("UPDATE audit_logs", "UPDATE audit_logs SET action = action"),
                 ("DELETE stock_movements", "DELETE FROM stock_movements"),
-                # `total`, not `total_amount` — the latter does not exist, and naming it
-                # made this probe fail with UndefinedColumn, which looks identical to a
-                # refusal if you only check that an exception was raised. The check now
-                # names a real column, so a PASS means the privilege was enforced rather
-                # than that the statement was malformed.
-                ("UPDATE invoices.total", "UPDATE invoices SET total = total"),
+                # `total` is no longer refused as of migration 0024 — the amend path
+                # writes it, deliberately. `issued_at` is one of the identity columns
+                # 0024's own docstring names as "notably absent" from the editable set:
+                # an amend may change what a bill says, never its place in the series or
+                # when it was issued. This is the column that replaces the old `total`
+                # probe as the thing that must still be refused.
+                ("UPDATE invoices.issued_at", "UPDATE invoices SET issued_at = issued_at"),
                 ("DELETE invoices", "DELETE FROM invoices"),
                 ("DELETE payments", "DELETE FROM payments"),
-                (
-                    "UPDATE invoice_items.line_total",
-                    "UPDATE invoice_items SET line_total = line_total",
-                ),
+                # `invoice_items` gained a full table-level UPDATE/DELETE grant in 0024 —
+                # `line_total` is no longer refused, deliberately. `TRUNCATE` is what 0024
+                # explicitly keeps revoked (`REVOKE TRUNCATE ON invoice_items`), so that is
+                # the probe that now proves the remaining boundary.
+                ("TRUNCATE invoice_items", "TRUNCATE invoice_items"),
             ):
                 try:
                     rc.execute(text(sql))
