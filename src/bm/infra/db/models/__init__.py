@@ -62,6 +62,8 @@ from bm.infra.db.models.inventory import (
     StockCountSession,
     StockMovement,
 )
+from bm.infra.db.models.mechanics import Mechanic
+from bm.infra.db.models.revisions import InvoiceRevision, InvoiceRevisionItem
 from bm.infra.db.models.sales import (
     DraftBill,
     DraftBillItem,
@@ -94,9 +96,12 @@ __all__ = [
     "InventoryBalance",
     "Invoice",
     "InvoiceItem",
+    "InvoiceRevision",
+    "InvoiceRevisionItem",
     "InvoiceSeries",
     "Job",
     "LoginAttempt",
+    "Mechanic",
     "Membership",
     "Notification",
     "OutboxEvent",

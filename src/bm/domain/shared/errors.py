@@ -63,6 +63,10 @@ class ErrorCode(StrEnum):
     INVOICE_ALREADY_CANCELLED = "INVOICE_ALREADY_CANCELLED"
     CANCEL_WINDOW_EXPIRED = "CANCEL_WINDOW_EXPIRED"
     INVOICE_CANCELLED = "INVOICE_CANCELLED"
+    #: Editing a finalised invoice (owner Decision A, 2026-11-07).
+    INVOICE_VERSION_CONFLICT = "INVOICE_VERSION_CONFLICT"
+    INVOICE_NOT_EDITABLE = "INVOICE_NOT_EDITABLE"
+    EDIT_BELOW_PAID_TOTAL = "EDIT_BELOW_PAID_TOTAL"
 
     # --- payments and returns ------------------------------------------------
     OVER_ALLOCATION = "OVER_ALLOCATION"
@@ -374,6 +378,48 @@ class InvoiceCancelled(DomainError):
     code = ErrorCode.INVOICE_CANCELLED
     status_code = 409
     message = "This bill was cancelled."
+
+
+# --- editing a finalised invoice (owner Decision A, 2026-11-07) ---------------
+
+
+class InvoiceVersionConflict(DomainError):
+    """Somebody else changed this bill while it was open for editing.
+
+    Refused rather than merged: there is no safe automatic resolution for two people
+    having edited different lines of one financial record, and silently keeping the last
+    writer's version is how an edit disappears.
+    """
+
+    code = ErrorCode.INVOICE_VERSION_CONFLICT
+    status_code = 409
+    message = "This bill was changed by someone else. Reload it and make the edit again."
+
+
+class InvoiceNotEditable(DomainError):
+    """A cancelled bill is not edited — it is already reversed (ADR-015, Decision C)."""
+
+    code = ErrorCode.INVOICE_NOT_EDITABLE
+    status_code = 409
+    message = "A cancelled bill cannot be edited."
+
+
+class EditBelowPaidTotal(DomainError):
+    """The owner's explicit rule (Decision A, 2026-11-07).
+
+    Lowering a bill below what has already been paid would leave money that this system
+    has no way to describe — there is no refund entity and no customer-credit mechanism,
+    and inventing one was expressly excluded. So the edit is **blocked**, the payment
+    history is left exactly as it is, and the operator is pointed at the sanctioned
+    return / credit-note workflow instead.
+    """
+
+    code = ErrorCode.EDIT_BELOW_PAID_TOTAL
+    status_code = 409
+    message = (
+        "This bill has already been paid more than the new total. Use a return or a "
+        "credit note instead — editing cannot reduce a bill below what was paid."
+    )
 
 
 # --- payments and returns -----------------------------------------------------

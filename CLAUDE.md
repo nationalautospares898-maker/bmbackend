@@ -102,10 +102,20 @@ write another module's tables.
 
 ## 5. Invariants — never break these
 
-1. **Finalised financial records are immutable.** No `UPDATE`/`DELETE` on `invoices` (except the
-   enumerated cancellation and derived-cache columns), `invoice_items` (except `returned_quantity`),
-   `stock_movements`, `payments`, `audit_logs`. Database privileges enforce it; do not try to work
-   around them. Corrections are **cancellation, return, credit note or reversal** (ADR-015).
+1. **Every state a financial record has ever been in is permanently recorded.**
+   ⚠️ **Restated 2026-11-07** — the owner reversed OD-10's "no edit path, ever" (Decision A).
+   * `stock_movements`, `payments`, `payment_allocations`, `audit_logs`, `invoice_revisions` and
+     `invoice_revision_items` are **append-only**: no `UPDATE`/`DELETE` for `bm_app`, enforced by
+     privilege. Do not try to work around them.
+   * `invoices` and `invoice_items` are the **current** projection and may be edited **only**
+     through `domain/sales/amend.py`, which writes the complete before-state to `invoice_revisions`
+     first, in the same transaction.
+   * An invoice's **identity** is still immutable: `invoice_number`, `sequence_number`,
+     `invoice_series_id`, `issued_at` are outside the `UPDATE` grant. `invoices` has no `DELETE`.
+   * An edit **never** writes a payment, and is **refused** if the new total is below `amount_paid`
+     (`EDIT_BELOW_PAID_TOTAL`).
+   * Cancellation, return, credit note and reversal are unchanged (ADR-015, Decision C) and remain
+     the correction for a sale that should not have happened.
 2. **The server computes all money.** `client_computed_total` is a cross-check that produces
    `422 TOTAL_MISMATCH`, never a value to trust.
 3. **Money is `Decimal` / `NUMERIC` / JSON string.** No `float` in `domain/`, no float columns, no
@@ -281,7 +291,9 @@ write another module's tables.
     `docs/OWNER-DECISIONS.md` and `README.md` during Phase 2 closure.)*
 - **No approval date, approver name, accounting sign-off or legal review exists.** Never record one.
 - Do not bypass a business rule for convenience, "just in tests", or behind a debug flag.
-- Do not add an endpoint that mutates a finalised financial record.
+- Do not add an endpoint that mutates a finalised financial record **other than**
+  `POST /invoices/{id}:amend`, which is the one sanctioned path (owner Decision A) and only because
+  it records an immutable before-state first. Do not add a second.
 - Do not add a sync operation type that moves money or stock.
 - Do not weaken an invariant test to make a build green.
 - Do not make reconciliation auto-repair a drifted balance — it must **alert**, because drift means a
@@ -330,6 +342,10 @@ write another module's tables.
 | Offline scope and sync protocol | `docs/OFFLINE-SYNCHRONIZATION.md` |
 | Test layers and invariant suite | `docs/TESTING-STRATEGY.md` |
 | Environments, migrations, backups, go-live | `docs/DEPLOYMENT.md` |
+| **★ Neon + Railway + Vercel, step by step** | `docs/PRODUCTION-DEPLOYMENT-GUIDE.md` |
+| **Every env var, both repositories, one table** | `docs/PRODUCTION-ENVIRONMENT-VARIABLES.md` |
+| Railway variables and service settings | `docs/RAILWAY-ENVIRONMENT-VARIABLES.md` |
+| Vercel variables and project settings | `../bmfrontend/docs/VERCEL-ENVIRONMENT-VARIABLES.md` |
 | Why a choice was made | `docs/DECISIONS.md` |
 | Requirement → endpoint → table → test | `docs/TRACEABILITY.md` |
 | Client behaviour | `../bmfrontend/docs/` |

@@ -117,6 +117,7 @@ the service layer, never only in the UI.
 | `inventory.adjust` | ✓ | ✓ | – | ✓ | – | – |
 | `inventory.receive` | ✓ | ✓ | – | ✓ | – | – |
 | `catalog.read` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `catalog.create` | ✓ | ✓ | ✓³ | ✓ | – | – |
 | `catalog.write` | ✓ | ✓ | – | ✓ | – | – |
 | `catalog.cost.read` | ✓ | ✓ | – | ✓ | ✓ | ✓ |
 | `customer.manage` | ✓ | ✓ | ✓ | – | – | – |
@@ -133,7 +134,11 @@ the service layer, never only in the UI.
 | `audit.read` | ✓ | ✓ | – | – | ✓ | ✓ |
 
 ¹ Cashier discount is capped by `settings.discount.cashier_max_percent`, default **0%** until the
-owner sets it. ² Cashier sees only their own counter/shift totals.
+owner sets it. ² Cashier sees only their own counter/shift totals. ³ `catalog.create` is **create
+only** — it lets a cashier add a part that is missing at the counter (owner Decision B,
+2026-11-07) and does **not** permit editing or withdrawing an existing product, which still
+requires `catalog.write`. `POST /products` accepts either permission; every other catalogue write
+accepts `catalog.write` alone.
 
 **Rules.**
 - Every role is scoped to a `business_id` and a set of `branch_id`s via a membership row.
@@ -312,9 +317,10 @@ Priority: **P0** = required for go-live, **P1** = required within 3 months, **P2
 | FR-SALE-005 | P0 | Each sale item snapshots: product id, name, SKU, unit, quantity, unit price, line discount, line total, tax fields as configured, and cost at time of sale (for margin reporting). Later catalog edits never change a past invoice. |
 | FR-SALE-006 | P0 | If current catalog price differs from the draft's `catalog_price_at_add` for any line not explicitly marked as an override, finalisation returns `409 PRICE_CHANGED` listing the affected lines, unless the request sets `accept_price_changes: true`. |
 | FR-SALE-007 | P0 | Insufficient stock returns `409 INSUFFICIENT_STOCK` with the per-line shortfall (`requested`, `available`). No stock is moved and no invoice is created. |
-| FR-SALE-008 | P0 | A caller with `inventory.oversell.override` may finalise despite insufficient stock by sending `oversell_override: {reason: "..."}`. The reason is mandatory, minimum 10 characters, stored on the invoice and in the audit log with the acting user and device. |
+| FR-SALE-008 | P0 | A caller with `inventory.oversell.override` may finalise despite insufficient stock by sending `oversell_override: {reason: "..."}` after the server has refused the ordinary attempt. The reason is mandatory, minimum 10 characters, stored on the invoice, stock movement and audit log with the acting user and device. Catalogue creation itself records no stock. |
 | FR-SALE-009 | P0 | Cash and credit sales use the **same** endpoint and engine; they differ only in the payment records created and the resulting `payment_status`. |
-| FR-SALE-010 | P0 | A finalised invoice is **immutable**. There is no update endpoint for invoices or invoice items. |
+| FR-SALE-010 | P0 | ⚠️ **Amended 2026-11-07** (owner Decision A). A finalised invoice may be edited in place by a holder of `billing.sale.edit`, via `POST /invoices/{id}:amend`. Its **identity** is immutable — `invoice_number`, `sequence_number`, `invoice_series_id` and `issued_at` cannot be changed, enforced by column-level grant. Every pre-edit state is recorded in `invoice_revisions`, which is append-only at privilege level. Payments are never written by an edit; stock is corrected by new movements. An edit that would take the total **below `amount_paid` is refused** (`EDIT_BELOW_PAID_TOTAL`) — the correction there is a return or a credit note. There is still no `DELETE` for invoices or invoice items. |
+| FR-SALE-016 | P0 | Every edit of a finalised invoice records an **immutable** before-state (header, lines, totals, payment state, editor, time, mandatory reason) readable by authorised staff at `GET /invoices/{id}/revisions`. Revisions are never updated or deleted. |
 | FR-SALE-011 | P0 | An invoice may be **cancelled** (not deleted) by an authorised user within `settings.sales.cancel_window_hours` (default 24) with a mandatory reason. Cancellation writes reversing stock movements and a full-value credit note in one transaction. The invoice number is retained and the record stays visible as `cancelled`. |
 | FR-SALE-012 | P0 | Finalising a draft marks the draft `finalized` and links it to the invoice. The draft can never be finalised twice. |
 | FR-SALE-013 | P1 | An invoice records the counter, device and user that produced it, for shift reconciliation. |
@@ -338,7 +344,7 @@ Priority: **P0** = required for go-live, **P1** = required within 3 months, **P2
 | FR-INV-002 | P0 | Movement reasons are a closed set: `opening`, `purchase_receipt`, `sale`, `sale_cancellation`, `customer_return`, `supplier_return`, `adjustment_increase`, `adjustment_decrease`, `transfer_out`, `transfer_in`, `import_apply`. Each movement references its source document. |
 | FR-INV-003 | P0 | Stock movements are immutable. Mistakes are corrected by a new, opposite, reasoned movement. |
 | FR-INV-004 | P0 | Concurrent sales of the same product are serialised by row-level locks acquired in a deterministic order, so two counters can never both consume the same last unit. |
-| FR-INV-005 | P0 | Balances may go negative **only** through an audited oversell override. All other paths reject it. |
+| FR-INV-005 | P0 | Balances may go negative **only** through an audited oversell override attached to a sale; catalogue creation and every other path remain stock-neutral or reject it. |
 | FR-INV-006 | P0 | A reconciliation routine recomputes every balance from the ledger and reports discrepancies. It runs on demand and nightly, and never silently rewrites balances — it raises an alert and requires an authorised adjustment. |
 | FR-INV-007 | P0 | Manual adjustments require `inventory.adjust`, a reason from a configurable list plus free text, and are fully audited. |
 | FR-INV-008 | P1 | Per-product reorder level and low-stock listing. |

@@ -28,6 +28,10 @@ class Permission(StrEnum):
     BILLING_PRICE_OVERRIDE = "billing.price.override"
     BILLING_DISCOUNT_APPLY = "billing.discount.apply"
     BILLING_SALE_CANCEL = "billing.sale.cancel"
+    #: Edit a finalised bill in place (owner Decision A, 2026-11-07). Held alongside
+    #: `billing.sale.cancel` — both change a finalised financial record, so both belong
+    #: to the same people. Deliberately **not** a cashier permission.
+    BILLING_SALE_EDIT = "billing.sale.edit"
     BILLING_DRAFT_TAKEOVER = "billing.draft.takeover"
 
     INVENTORY_OVERSELL_OVERRIDE = "inventory.oversell.override"
@@ -35,6 +39,12 @@ class Permission(StrEnum):
     INVENTORY_RECEIVE = "inventory.receive"
 
     CATALOG_READ = "catalog.read"
+    #: **Create only.** Deliberately narrower than `catalog.write`, which also permits
+    #: editing and deactivating any product. The owner approved letting a cashier add a
+    #: missing part from the billing counter (2026-11-07 Decision B) without granting
+    #: them the catalogue generally — so this is its own permission rather than a
+    #: widening of the existing one.
+    CATALOG_CREATE = "catalog.create"
     CATALOG_WRITE = "catalog.write"
     CATALOG_COST_READ = "catalog.cost.read"
 
@@ -64,11 +74,13 @@ PERMISSION_DESCRIPTIONS: dict[Permission, str] = {
     Permission.BILLING_PRICE_OVERRIDE: "Change an item's price on a bill",
     Permission.BILLING_DISCOUNT_APPLY: "Apply a discount to a bill",
     Permission.BILLING_SALE_CANCEL: "Cancel a completed bill within the allowed window",
+    Permission.BILLING_SALE_EDIT: "Edit a completed bill, with a reason and an audited revision",
     Permission.BILLING_DRAFT_TAKEOVER: "Take over a draft bill from another counter",
     Permission.INVENTORY_OVERSELL_OVERRIDE: "Sell below the recorded stock, with a reason",
     Permission.INVENTORY_ADJUST: "Correct stock quantities, with a reason",
     Permission.INVENTORY_RECEIVE: "Receive supplier stock",
     Permission.CATALOG_READ: "View products and stock",
+    Permission.CATALOG_CREATE: "Add a new product (but not edit or withdraw one)",
     Permission.CATALOG_WRITE: "Add and edit products",
     Permission.CATALOG_COST_READ: "View cost prices and margins",
     Permission.CUSTOMER_MANAGE: "Add and edit customers",
@@ -124,11 +136,13 @@ ROLE_PERMISSIONS: dict[SystemRole, frozenset[Permission]] = {
             P.BILLING_PRICE_OVERRIDE,
             P.BILLING_DISCOUNT_APPLY,
             P.BILLING_SALE_CANCEL,
+            P.BILLING_SALE_EDIT,
             P.BILLING_DRAFT_TAKEOVER,
             P.INVENTORY_OVERSELL_OVERRIDE,
             P.INVENTORY_ADJUST,
             P.INVENTORY_RECEIVE,
             P.CATALOG_READ,
+            P.CATALOG_CREATE,
             P.CATALOG_WRITE,
             P.CATALOG_COST_READ,
             P.CUSTOMER_MANAGE,
@@ -148,6 +162,10 @@ ROLE_PERMISSIONS: dict[SystemRole, frozenset[Permission]] = {
             P.BILLING_SALE_FINALIZE,
             P.BILLING_DISCOUNT_APPLY,  # capped by settings
             P.CATALOG_READ,
+            # Create only (Decision B). The cashier may add a part that is missing at
+            # the counter; they still cannot edit or withdraw an existing one, which is
+            # what `catalog.write` would have given them.
+            P.CATALOG_CREATE,
             P.CUSTOMER_MANAGE,
             P.CREDIT_READ,
             P.CREDIT_PAYMENT_RECORD,
@@ -159,6 +177,7 @@ ROLE_PERMISSIONS: dict[SystemRole, frozenset[Permission]] = {
             P.INVENTORY_ADJUST,
             P.INVENTORY_RECEIVE,
             P.CATALOG_READ,
+            P.CATALOG_CREATE,
             P.CATALOG_WRITE,
             P.CATALOG_COST_READ,
             P.IMPORTS_MANAGE,

@@ -72,6 +72,10 @@ class AuditAction(StrEnum):
     # sales
     SALE_FINALIZED = "sale.finalized"
     INVOICE_CANCELLED = "invoice.cancelled"
+    #: An in-place edit of a finalised bill (owner Decision A, 2026-11-07). The audit row
+    #: carries the reason and the before/after totals; the full before-state is in
+    #: `invoice_revisions`.
+    INVOICE_AMENDED = "invoice.amended"
     INVOICE_DISCOUNT_APPLIED = "invoice.discount_applied"
     INVOICE_PRINTED = "invoice.printed"
     DRAFT_TAKEN_OVER = "draft.taken_over"
@@ -88,6 +92,11 @@ class AuditAction(StrEnum):
     CUSTOMER_CREATED = "customer.created"
     CUSTOMER_UPDATED = "customer.updated"
     CUSTOMER_DEACTIVATED = "customer.deactivated"
+
+    # mechanics (reference data, not a financial record — see models/mechanics.py)
+    MECHANIC_CREATED = "mechanic.created"
+    MECHANIC_UPDATED = "mechanic.updated"
+    MECHANIC_DEACTIVATED = "mechanic.deactivated"
 
     # purchases, returns, imports
     PURCHASE_CONFIRMED = "purchase.confirmed"

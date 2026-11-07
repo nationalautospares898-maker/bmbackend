@@ -71,6 +71,16 @@ class InvoiceRecord:
     vehicle_number_snapshot: str | None
     mechanic_name_snapshot: str | None
     phone_snapshot: str | None
+    #: The bill's own free-text note, as written when it was issued.
+    #:
+    #: `invoices.notes` has been stored since 0011 and accepted by `SaleHeaderIn` since
+    #: finalisation existed, but was never read back — so the Credit Bills bill viewer
+    #: could not show it and the note was, in practice, write-only.
+    notes: str | None
+    #: Optimistic-concurrency token for in-place editing (migration 0024). Published so
+    #: the editor can send back the version it actually read — without it the client
+    #: would have to guess, and a guess defeats the whole mechanism.
+    version: int
     subtotal: Decimal
     discount_total: Decimal
     tax_total: Decimal
@@ -169,6 +179,8 @@ class InvoiceReader:
             vehicle_number_snapshot=invoice.vehicle_number_snapshot,
             mechanic_name_snapshot=invoice.mechanic_name_snapshot,
             phone_snapshot=invoice.phone_snapshot,
+            notes=invoice.notes,
+            version=invoice.version,
             subtotal=invoice.subtotal,
             discount_total=invoice.discount_total,
             tax_total=invoice.tax_total,

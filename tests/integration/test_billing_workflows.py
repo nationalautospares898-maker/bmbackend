@@ -820,6 +820,107 @@ def test_authorised_oversell_records_the_reason_on_invoice_and_movement(
     assert reason in audited
 
 
+@pytest.mark.parametrize("sale_type", ["cash", "credit"])
+def test_new_catalogue_product_can_be_sold_with_explicit_audited_oversell(
+    sale_type: str,
+    api_client: TestClient,
+    owner_headers: dict[str, str],
+    migration_session: Session,
+    tenant: Tenant,
+    units: None,
+) -> None:
+    """Product creation remains stock-neutral; a separate, authorised sale records
+    the true negative balance and the reason, exactly once for cash or credit."""
+    product_id = str(uuid.uuid4())
+    name = f"Owner added part {product_id[:8]}"
+    created = api_client.post(
+        "/api/v1/products",
+        headers=owner_headers,
+        json={
+            "id": product_id,
+            "name": name,
+            "unit_code": "NOS",
+            "default_selling_price": "1250.0000",
+            "reorder_level": "10.000",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["default_selling_price"] == "1250.0000"
+    assert migration_session.execute(
+        text("SELECT reorder_level FROM products WHERE id = :id"), {"id": product_id}
+    ).scalar_one() == D("10.000")
+    assert (
+        migration_session.execute(
+            text("SELECT count(*) FROM stock_movements WHERE product_id = :id"),
+            {"id": product_id},
+        ).scalar_one()
+        == 0
+    )
+    assert (
+        migration_session.execute(
+            text("SELECT count(*) FROM inventory_balances WHERE product_id = :id"),
+            {"id": product_id},
+        ).scalar_one()
+        == 0
+    )
+
+    customer_id = str(uuid.uuid4())
+    body = _finalize_body(
+        tenant,
+        product_id,
+        sale_type=sale_type,
+        quantity="1.000",
+        customer=(
+            {"mode": "new", "customer_id": customer_id, "name": "NAS Test Customer"}
+            if sale_type == "credit"
+            else None
+        ),
+    )
+
+    refused = api_client.post(
+        "/api/v1/sales:finalize", headers={**owner_headers, **_key()}, json=body
+    )
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "INSUFFICIENT_STOCK"
+    assert migration_session.execute(text("SELECT count(*) FROM invoices")).scalar_one() == 0
+
+    reason = "Verified item supplied; owner approved recorded-stock exception"
+    body["oversell_override"] = {"reason": reason}
+    key = _key()
+    completed = api_client.post(
+        "/api/v1/sales:finalize", headers={**owner_headers, **key}, json=body
+    )
+    assert completed.status_code == 201, completed.text
+    invoice = completed.json()["invoice"]
+    assert invoice["total"] == "1250.00"
+    assert invoice["oversell_override"] is True
+    assert invoice["oversell_reason"] == reason
+    assert invoice["payment_status"] == ("paid" if sale_type == "cash" else "unpaid")
+    assert invoice["outstanding"] == ("0.00" if sale_type == "cash" else "1250.00")
+
+    replay = api_client.post("/api/v1/sales:finalize", headers={**owner_headers, **key}, json=body)
+    assert replay.status_code == 201
+    assert replay.headers.get("Idempotent-Replay") == "true"
+    assert replay.json()["invoice"]["id"] == invoice["id"]
+    assert (
+        migration_session.execute(
+            text("SELECT count(*) FROM invoices WHERE id = :id"), {"id": invoice["id"]}
+        ).scalar_one()
+        == 1
+    )
+    movement = migration_session.execute(
+        text(
+            "SELECT quantity_delta, oversell_override, override_reason FROM stock_movements "
+            "WHERE source_id = :id AND product_id = :product"
+        ),
+        {"id": invoice["id"], "product": product_id},
+    ).one()
+    assert movement.quantity_delta == D("-1.000")
+    assert movement.oversell_override is True
+    assert movement.override_reason == reason
+    assert _stock_of(migration_session, product_id) == D("-1.000")
+
+
 def test_a_client_total_mismatch_is_never_silently_accepted(
     api_client: TestClient,
     owner_headers: dict[str, str],
@@ -2210,11 +2311,43 @@ def test_the_catalog_delta_never_carries_a_cost_price(
     regardless of the caller's permission."""
     response = api_client.get("/api/v1/sync/catalog", headers=owner_headers)
     assert response.status_code == 200, response.text
-    serialised = str(response.json())
-    assert "cost_price" not in serialised
-    assert "980" not in serialised
+    body = response.json()
+
+    # Asserted against the parsed structure, not against `str(body)`.
+    #
+    # This used to be `assert "980" not in str(response.json())`, which is a substring
+    # search over the whole payload — and `980` is three digits that turn up in product
+    # UUIDs and in `as_of` microseconds by chance. It failed about one full-suite run in
+    # three while the cost price was never present at all: a false alarm on the most
+    # security-sensitive assertion in the file, which is the worst place to have one.
+    #
+    # The intent is unchanged and now precise: no `cost_price` key anywhere in the
+    # payload, and the cost figure itself appears as no value anywhere in it.
+    def keys_and_values(node: object) -> tuple[set[str], set[str]]:
+        keys: set[str] = set()
+        values: set[str] = set()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                keys.add(str(key))
+                child_keys, child_values = keys_and_values(value)
+                keys |= child_keys
+                values |= child_values
+        elif isinstance(node, list):
+            for item in node:
+                child_keys, child_values = keys_and_values(item)
+                keys |= child_keys
+                values |= child_values
+        else:
+            values.add(str(node))
+        return keys, values
+
+    keys, values = keys_and_values(body)
+    assert "cost_price" not in keys
+    assert not any("cost" in key.lower() for key in keys), sorted(keys)
+    # The fixture's cost price, in the forms the API could plausibly render it.
+    assert {"980.0000", "980.00", "980"}.isdisjoint(values)
     # Every cached figure carries its `as_of`.
-    assert response.json()["products"][0]["stock"]["as_of"]
+    assert body["products"][0]["stock"]["as_of"]
 
 
 # =============================================================================

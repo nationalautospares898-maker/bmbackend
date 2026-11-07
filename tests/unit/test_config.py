@@ -101,6 +101,35 @@ def test_empty_cors_list_is_empty_not_wildcard() -> None:
     assert _settings(BM_CORS_ALLOWED_ORIGINS="").cors_origins == []
 
 
+def test_refresh_cookie_is_samesite_lax_unless_a_deployment_opts_out() -> None:
+    """The default is the CSRF control described in `api/v1/auth.py`, so it is asserted
+    rather than left to whichever value happens to be in the class body."""
+    assert _settings().refresh_cookie_samesite == "lax"
+
+
+def test_samesite_none_is_refused_on_local_where_the_cookie_is_not_secure() -> None:
+    """`auth.py` sets `secure = env != "local"`, and a browser discards a
+    `SameSite=None` cookie that is not `Secure`. Refused at startup rather than produced:
+    the symptom is a working login followed by an inexplicable sign-out fifteen minutes
+    later, which is close to undiagnosable from the counter."""
+    with pytest.raises(Exception) as caught:
+        _settings(BM_ENV="local", BM_REFRESH_COOKIE_SAMESITE="none")
+    assert "Secure" in str(caught.value)
+
+
+def test_samesite_none_is_allowed_in_production() -> None:
+    """The front end and the API on two *provider* domains (`*.vercel.app` talking to
+    `*.up.railway.app`) are cross-site, so a `lax` cookie is never sent at all and the
+    session cannot be refreshed. `none` is how that deployment works."""
+    settings = _settings(BM_ENV="production", BM_REFRESH_COOKIE_SAMESITE="none")
+    assert settings.refresh_cookie_samesite == "none"
+
+
+def test_an_unknown_samesite_value_is_refused() -> None:
+    with pytest.raises(ValidationError):
+        _settings(BM_REFRESH_COOKIE_SAMESITE="cross-site")
+
+
 def test_settings_are_frozen() -> None:
     """Configuration is read once at startup; a request must not be able to change it."""
     settings = _settings()

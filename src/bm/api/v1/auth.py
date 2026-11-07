@@ -5,6 +5,10 @@ cookie and is **never** in a response body (NFR-SEC-003). `SameSite=Lax` plus th
 path is the CSRF control: every other endpoint authenticates with a bearer header, so a
 cross-site form post cannot act as the user, and `/auth/refresh` only mints a token into
 the same browser and is additionally bound to `X-Device-Id`.
+
+`SameSite` is the default and `BM_REFRESH_COOKIE_SAMESITE` can only relax it to `none`,
+which a deployment needs when the front end and the API sit on two *provider* domains and
+the cookie would otherwise never be sent at all. `config.py` has the reasoning.
 """
 
 from __future__ import annotations
@@ -125,7 +129,10 @@ def _set_refresh_cookie(response: Response, token: str, *, settings: SettingsDep
         # `secure` is relaxed only for local HTTP development; staging and production
         # are HTTPS-only, so the cookie is never sent in clear there.
         secure=settings.env != "local",
-        samesite="lax",
+        # `lax` unless a deployment has had to opt out of it, which is only the
+        # front-end-and-API-on-two-provider-domains case. `config.py` carries the full
+        # reasoning and refuses the one combination a browser would reject.
+        samesite=settings.refresh_cookie_samesite,
         path=REFRESH_COOKIE_PATH,
         max_age=settings.refresh_token_ttl_days * 24 * 3600,
     )

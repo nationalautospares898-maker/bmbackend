@@ -1,8 +1,19 @@
 # --- Secrets and environment -------------------------------------------------
-# Never commit real configuration. Only .env.example, with placeholders.
+# Never commit real configuration. Only the `*.example` templates, with placeholders.
+#
+# `.env.production` lands here by the `.env.*` rule: it holds the Neon credentials that
+# `alembic upgrade head` and `scripts/production_db.py` run with, and it is the one file
+# in this repository that is expected to contain a live DDL-capable password.
+#
+# The negations are per-file rather than a `!.env.*.example` glob because git cannot
+# re-include a file whose *directory* was excluded, and a single explicit line per
+# template is also impossible to misread. Adding a new environment means adding a line
+# here — `git check-ignore -v .env.<new>.example` confirms it, and the original
+# `.env.production.example` was silently ignored until that check was run.
 .env
 .env.*
 !.env.example
+!.env.production.example
 *.pem
 *.key
 *.p12
@@ -58,6 +69,11 @@ coverage.xml
 # `pytest --cov-report=json` output, read by scripts/check_coverage.py.
 coverage.json
 .tox/
+
+# Playwright's own run-state (`.last-run.json`) and HTML report. The frontend suite is
+# what generates these, but it is run against this backend and can leave them here too.
+test-results/
+playwright-report/
 
 # --- Local storage and logs --------------------------------------------------
 #

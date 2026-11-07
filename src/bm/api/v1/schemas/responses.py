@@ -272,6 +272,11 @@ class InvoiceOut(Out):
     is_credit: bool
     due_date: date | None
     customer: InvoiceCustomerOut
+    #: The bill's own free-text note, as written when it was issued.
+    notes: str | None
+    #: Optimistic concurrency for in-place editing. An amend sends this back; a mismatch
+    #: under the server's row lock is a stale edit and is refused.
+    version: int
     items: list[InvoiceItemOut]
     subtotal: MoneyStr
     discount_total: MoneyStr
@@ -382,6 +387,81 @@ class CreditCustomersOut(Out):
     summary: dict[str, Any]
     page: Page
     as_of: datetime
+
+
+class AmendOut(Out):
+    """`POST /invoices/{id}:amend`. The invoice's identity is **unchanged** — there is
+    deliberately no new invoice id or reference in this response, because an edit does
+    not create one."""
+
+    invoice_id: uuid.UUID
+    #: The before-state this edit recorded. 1 for the first edit.
+    revision_number: int
+    #: The new version, for the editor's next optimistic-concurrency check.
+    version: int
+    total: MoneyStr
+    #: Unchanged by the edit; re-derived from the untouched allocations.
+    amount_paid: MoneyStr
+    outstanding: MoneyStr
+    payment_status: str
+
+
+class InvoiceRevisionItemOut(Out):
+    line_no: int
+    product_name: str
+    sku: str | None
+    unit_code: str
+    quantity: QuantityStr
+    unit_price: MoneyStr
+    line_total: MoneyStr
+
+
+class InvoiceRevisionOut(Out):
+    """One recorded before-state. Immutable: `invoice_revisions` is `SELECT, INSERT`
+    only at the privilege level."""
+
+    revision_number: int
+    reason: str
+    created_at: str
+    edited_by: str | None
+    total: MoneyStr
+    amount_paid: MoneyStr
+    payment_status: str
+    status: str
+    customer_name: str | None
+    mechanic_name: str | None
+    vehicle_number: str | None
+    notes: str | None
+    items: list[InvoiceRevisionItemOut]
+
+
+class InvoiceRevisionsOut(Out):
+    items: list[InvoiceRevisionOut]
+
+
+# --- mechanics ----------------------------------------------------------------
+
+
+class MechanicSuggestionOut(Out):
+    """Reference data, so no monetary field appears here at all."""
+
+    id: uuid.UUID
+    name: str
+    phone: str | None
+    is_active: bool
+    use_count: int
+    last_used_at: datetime | None
+
+
+class MechanicOut(MechanicSuggestionOut):
+    #: `False` when `POST /mechanics` matched an existing name rather than creating one.
+    #: Always `False` on a rename, where nothing was created.
+    created: bool
+
+
+class MechanicListOut(Out):
+    items: list[MechanicSuggestionOut]
+    page: Page
 
 
 # --- sync ---------------------------------------------------------------------

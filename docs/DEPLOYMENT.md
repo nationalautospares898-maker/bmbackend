@@ -12,6 +12,24 @@
 > set, no migration run, no container built or pushed. Hosting provider and region are open
 > questions (Q-OPS-1).
 
+> **★ For the actual provider-specific procedure, read
+> [`PRODUCTION-DEPLOYMENT-GUIDE.md`](PRODUCTION-DEPLOYMENT-GUIDE.md).** This document stays the
+> provider-neutral design — environments, backup policy, rollback matrix, scaling ceiling, secret
+> rotation and the go-live gate — and all of that still holds. The guide answers Q-OPS-1 concretely
+> (Neon for the database, Railway for the API, Vercel for the client) and carries the exact
+> commands, variables and ordering. Two corrections it makes to this file, both verified against
+> the source rather than inferred:
+>
+> * **§3's variable table lists `BM_STORAGE_ACCESS_KEY` and `BM_STORAGE_SECRET`.** Those are not
+>   fields on `Settings` at all — they were written for an S3 backend that was never built.
+>   `BM_STORAGE_BACKEND` and `BM_STORAGE_BUCKET` exist as fields but are read only for a startup
+>   log line and an unused seam respectively; `infra/storage/objects.py` is a filesystem store.
+> * **§9 names "replace the in-process rate limiter with a shared store" as the prerequisite for
+>   adding API replicas.** There is no in-process rate limiter: `BM_RATE_LIMIT_ENABLED` is read by
+>   nothing and `RateLimited` has no raiser. Login lockout *is* implemented and is database-backed,
+>   so it is already correct across replicas. One replica stays the right choice at this load — for
+>   simplicity, not for that reason.
+
 ---
 
 ## 1. Environments

@@ -241,6 +241,13 @@ def finalize_sale(ctx, cmd) -> Invoice:
     return invoice                                               # 11 COMMIT
 ```
 
+Catalog creation records no opening quantity and writes no inventory movement. A first sale
+attempt with insufficient stock returns `INSUFFICIENT_STOCK` and creates no invoice. The frontend
+asks for explicit approval only after that refusal. The API independently requires the actor's
+`inventory.oversell.override` permission and a reason of at least 10 characters. The sale,
+negative stock movement, invoice flag, reason, and audit entry commit in the same transaction;
+finalisation stays online-only.
+
 Everything in that block either all happens or none of it does (FR-SALE-001).
 
 ### 5.3 Idempotency mechanism

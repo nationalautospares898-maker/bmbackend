@@ -106,6 +106,8 @@ _TABLES = (
     "credit_notes",
     "payments",
     "print_log",
+    "invoice_revision_items",
+    "invoice_revisions",
     "invoice_items",
     "draft_bill_items",
     "draft_bills",
@@ -125,6 +127,9 @@ _TABLES = (
     "customer_vehicles",
     "customer_phones",
     "customers",
+    # Reference data, but it holds a RESTRICT foreign key on `users.created_by_user_id`,
+    # so it must go before `users` further down or the reset fails on it.
+    "mechanics",
     "product_prices",
     "product_aliases",
     "products",
@@ -281,6 +286,40 @@ def seed(session: Session) -> None:
     print(f"seeded business={BUSINESS_ID}")
 
 
+def assert_no_real_business(session: Session) -> None:
+    """Refuse to run against a database that holds a business other than the fixture.
+
+    ## Why this is a guard and not a note
+
+    `--reset` deletes the E2E business and everything under it. That is correct for a
+    throwaway database and catastrophic anywhere else, and the only thing standing
+    between the two used to be the operator typing the right `BM_DATABASE_URL`. The
+    owner's real shop now lives in `bm`; the fixture lives in `bm_e2e`. One mistyped
+    environment variable is all it would take.
+
+    The check is deliberately **not** on the database *name*: a guard that trusts a name
+    is a guard that fails the moment somebody renames something. It asks the database
+    what is actually in it. A database containing only the fixture (or nothing at all)
+    is fair game; one containing any other business is refused, with its name shown so
+    the operator can see what they nearly wiped.
+    """
+    rows = session.execute(
+        text("SELECT display_name FROM businesses WHERE id <> :fixture"),
+        {"fixture": BUSINESS_ID},
+    ).all()
+    if not rows:
+        return
+    names = ", ".join(repr(row.display_name) for row in rows)
+    raise SystemExit(
+        "refusing to run: this database holds a business that is not the E2E fixture "
+        f"({names}).\n\n"
+        "This script's --reset deletes a business and everything under it, so it must "
+        "only ever point at a disposable database. The E2E fixture lives in `bm_e2e`:\n\n"
+        "    BM_DATABASE_URL=postgresql+psycopg://bm_app:bm_app_local_only"
+        "@localhost:55439/bm_e2e\n"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reset", action="store_true", help="remove the tenant first")
@@ -288,6 +327,8 @@ def main() -> None:
 
     engine = create_engine(_database_url())
     with Session(engine) as session:
+        # Before anything is written or deleted.
+        assert_no_real_business(session)
         if args.reset:
             reset(session)
         seed(session)

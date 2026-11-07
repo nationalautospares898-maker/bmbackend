@@ -57,7 +57,7 @@
       },
       "AlertingStatusOut": {
         "additionalProperties": false,
-        "description": "OD-19's gap, made visible.\n\n`state` is `unconfigured` when alerting is on and no destination is set — an\noperator reading `/readyz` can see that alerts are being dropped instead of\ndiscovering it during an incident.",
+        "description": "OD-19's gap, made visible.\n\n`state` is `unconfigured` when alerting is on and no destination is set \u2014 an\noperator reading `/readyz` can see that alerts are being dropped instead of\ndiscovering it during an incident.",
         "properties": {
           "destination_hint": {
             "anyOf": [
@@ -191,6 +191,251 @@
         "title": "AllocationSpec",
         "type": "object"
       },
+      "AmendHeaderIn": {
+        "additionalProperties": false,
+        "description": "Header fields an edit may change.\n\nEvery field is optional, and **omitting one leaves it alone** \u2014 `model_fields_set` is\nwhat distinguishes \"not supplied\" from \"clear it\", so sending `null` deliberately\nblanks a field while sending nothing keeps it.",
+        "properties": {
+          "customer_business_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Business Name"
+          },
+          "customer_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "mechanic_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mechanic Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "vehicle_number": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vehicle Number"
+          }
+        },
+        "title": "AmendHeaderIn",
+        "type": "object"
+      },
+      "AmendLineIn": {
+        "additionalProperties": false,
+        "properties": {
+          "discount_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discount Percent"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Unit Price"
+          }
+        },
+        "required": [
+          "product_id",
+          "quantity",
+          "unit_price"
+        ],
+        "title": "AmendLineIn",
+        "type": "object"
+      },
+      "AmendOut": {
+        "additionalProperties": false,
+        "description": "`POST /invoices/{id}:amend`. The invoice's identity is **unchanged** \u2014 there is\ndeliberately no new invoice id or reference in this response, because an edit does\nnot create one.",
+        "properties": {
+          "amount_paid": {
+            "title": "Amount Paid",
+            "type": "string"
+          },
+          "invoice_id": {
+            "format": "uuid",
+            "title": "Invoice Id",
+            "type": "string"
+          },
+          "outstanding": {
+            "title": "Outstanding",
+            "type": "string"
+          },
+          "payment_status": {
+            "title": "Payment Status",
+            "type": "string"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "invoice_id",
+          "revision_number",
+          "version",
+          "total",
+          "amount_paid",
+          "outstanding",
+          "payment_status"
+        ],
+        "title": "AmendOut",
+        "type": "object"
+      },
+      "AmendRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "header": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AmendHeaderIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/AmendLineIn"
+            },
+            "minItems": 1,
+            "title": "Lines",
+            "type": "array"
+          },
+          "oversell_reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 10,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oversell Reason"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 5,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "reason",
+          "lines"
+        ],
+        "title": "AmendRequest",
+        "type": "object"
+      },
       "AssignCounterRequest": {
         "additionalProperties": false,
         "description": "`null` detaches the computer from every counter.\n\nA sub-resource carrying one field rather than a general `PUT /admin/devices/{id}`:\nthis is the only device column an administrator may set here, and a wider body would\nlet a counter assignment also rewrite a device's label, branch or revocation state.",
@@ -262,7 +507,7 @@
       },
       "BootstrapBusinessOut": {
         "additionalProperties": false,
-        "description": "The shop's heading as configured. Every field may be empty, and an empty field is\nrendered as nothing — never a placeholder and never the reference workbook's address\n(FR-PRINT-016, OD-4).",
+        "description": "The shop's heading as configured. Every field may be empty, and an empty field is\nrendered as nothing \u2014 never a placeholder and never the reference workbook's address\n(FR-PRINT-016, OD-4).",
         "properties": {
           "address_lines": {
             "items": {
@@ -606,7 +851,7 @@
       },
       "CatalogDeltaOut": {
         "additionalProperties": false,
-        "description": "⚠️ `cost_price` is **never** present, regardless of permission: a stolen counter\nmachine must not carry the shop's margins (`SECURITY.md §11`).",
+        "description": "\u26a0\ufe0f `cost_price` is **never** present, regardless of permission: a stolen counter\nmachine must not carry the shop's margins (`SECURITY.md \u00a711`).",
         "properties": {
           "as_of": {
             "format": "date-time",
@@ -1160,7 +1405,7 @@
       },
       "DailySalesOut": {
         "additionalProperties": true,
-        "description": "`GET /reports/daily-sales` — the one report a screen renders field by field.",
+        "description": "`GET /reports/daily-sales` \u2014 the one report a screen renders field by field.",
         "properties": {
           "as_of": {
             "format": "date-time",
@@ -1914,7 +2159,7 @@
       },
       "FinalizeOut": {
         "additionalProperties": false,
-        "description": "The `201` from `POST /sales:finalize` — cash and credit alike (ADR-033).",
+        "description": "The `201` from `POST /sales:finalize` \u2014 cash and credit alike (ADR-033).",
         "properties": {
           "invoice": {
             "$ref": "#/components/schemas/InvoiceOut"
@@ -2849,6 +3094,17 @@
             "title": "Money Policy Version",
             "type": "integer"
           },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
           "outstanding": {
             "title": "Outstanding",
             "type": "string"
@@ -2895,6 +3151,10 @@
           "total": {
             "title": "Total",
             "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [
@@ -2907,6 +3167,8 @@
           "is_credit",
           "due_date",
           "customer",
+          "notes",
+          "version",
           "items",
           "subtotal",
           "discount_total",
@@ -2923,6 +3185,187 @@
           "cancellation_reason"
         ],
         "title": "InvoiceOut",
+        "type": "object"
+      },
+      "InvoiceRevisionItemOut": {
+        "additionalProperties": false,
+        "properties": {
+          "line_no": {
+            "title": "Line No",
+            "type": "integer"
+          },
+          "line_total": {
+            "title": "Line Total",
+            "type": "string"
+          },
+          "product_name": {
+            "title": "Product Name",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "string"
+          },
+          "sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku"
+          },
+          "unit_code": {
+            "title": "Unit Code",
+            "type": "string"
+          },
+          "unit_price": {
+            "title": "Unit Price",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line_no",
+          "product_name",
+          "sku",
+          "unit_code",
+          "quantity",
+          "unit_price",
+          "line_total"
+        ],
+        "title": "InvoiceRevisionItemOut",
+        "type": "object"
+      },
+      "InvoiceRevisionOut": {
+        "additionalProperties": false,
+        "description": "One recorded before-state. Immutable: `invoice_revisions` is `SELECT, INSERT`\nonly at the privilege level.",
+        "properties": {
+          "amount_paid": {
+            "title": "Amount Paid",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "customer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "edited_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edited By"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InvoiceRevisionItemOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "mechanic_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mechanic Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "payment_status": {
+            "title": "Payment Status",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "string"
+          },
+          "vehicle_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vehicle Number"
+          }
+        },
+        "required": [
+          "revision_number",
+          "reason",
+          "created_at",
+          "edited_by",
+          "total",
+          "amount_paid",
+          "payment_status",
+          "status",
+          "customer_name",
+          "mechanic_name",
+          "vehicle_number",
+          "notes",
+          "items"
+        ],
+        "title": "InvoiceRevisionOut",
+        "type": "object"
+      },
+      "InvoiceRevisionsOut": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InvoiceRevisionOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "InvoiceRevisionsOut",
         "type": "object"
       },
       "InvoiceSummaryOut": {
@@ -3145,6 +3588,187 @@
           "tax_mode"
         ],
         "title": "MeOut",
+        "type": "object"
+      },
+      "MechanicEnsureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "MechanicEnsureRequest",
+        "type": "object"
+      },
+      "MechanicListOut": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MechanicSuggestionOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "MechanicListOut",
+        "type": "object"
+      },
+      "MechanicOut": {
+        "additionalProperties": false,
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "use_count": {
+            "title": "Use Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "phone",
+          "is_active",
+          "use_count",
+          "last_used_at",
+          "created"
+        ],
+        "title": "MechanicOut",
+        "type": "object"
+      },
+      "MechanicRenameRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "MechanicRenameRequest",
+        "type": "object"
+      },
+      "MechanicSuggestionOut": {
+        "additionalProperties": false,
+        "description": "Reference data, so no monetary field appears here at all.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "use_count": {
+            "title": "Use Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "phone",
+          "is_active",
+          "use_count",
+          "last_used_at"
+        ],
+        "title": "MechanicSuggestionOut",
         "type": "object"
       },
       "MoneyPolicyOut": {
@@ -3427,7 +4051,7 @@
       },
       "Page": {
         "additionalProperties": false,
-        "description": "Cursor pagination envelope (`API-SPECIFICATION.md §1.4`).",
+        "description": "Cursor pagination envelope (`API-SPECIFICATION.md \u00a71.4`).",
         "properties": {
           "has_more": {
             "default": false,
@@ -3475,7 +4099,7 @@
       },
       "PaymentHistoryOut": {
         "additionalProperties": false,
-        "description": "One row of `GET /payments`.\n\nDeclared for M25: the customer screen shows a payment history, and an undeclared\nresponse left the client stringifying `unknown` values — which ESLint correctly\nrefused, because `String(someObject)` yields `[object Object]` on a screen showing\nmoney.",
+        "description": "One row of `GET /payments`.\n\nDeclared for M25: the customer screen shows a payment history, and an undeclared\nresponse left the client stringifying `unknown` values \u2014 which ESLint correctly\nrefused, because `String(someObject)` yields `[object Object]` on a screen showing\nmoney.",
         "properties": {
           "allocated": {
             "anyOf": [
@@ -3683,7 +4307,7 @@
       },
       "PrintBusinessOut": {
         "additionalProperties": false,
-        "description": "Empty optional fields print nothing — **never a placeholder** (FR-PRINT-016).",
+        "description": "Empty optional fields print nothing \u2014 **never a placeholder** (FR-PRINT-016).",
         "properties": {
           "address_lines": {
             "items": {
@@ -3853,7 +4477,7 @@
       },
       "PrintPayloadOut": {
         "additionalProperties": false,
-        "description": "⚠️ Carries **no invoice number** of any kind (OD-3, T3-06).\n\n`document_title` comes from the server only and is `ESTIMATE` for cash and credit\nalike until the FR-TAX-003 gate passes (OD-24, FR-PRINT-021).",
+        "description": "\u26a0\ufe0f Carries **no invoice number** of any kind (OD-3, T3-06).\n\n`document_title` comes from the server only and is `ESTIMATE` for cash and credit\nalike until the FR-TAX-003 gate passes (OD-24, FR-PRINT-021).",
         "properties": {
           "amount_in_words": {
             "title": "Amount In Words",
@@ -4644,7 +5268,7 @@
       },
       "ReportOut": {
         "additionalProperties": true,
-        "description": "The common report envelope (`API-SPECIFICATION.md §3.11`).\n\n⚠️ The **only** permissive model in this module. Each report spreads its own figures\nat the top level — `daily-sales` has `gross`/`net`/`by_day`, `stock-position` has\n`rows` — so `extra=\"forbid\"` would make one model impossible. The envelope is what\nevery report shares and what the client relies on; the per-report figures are typed\nwhere a screen renders them field by field (`DailySalesOut`).",
+        "description": "The common report envelope (`API-SPECIFICATION.md \u00a73.11`).\n\n\u26a0\ufe0f The **only** permissive model in this module. Each report spreads its own figures\nat the top level \u2014 `daily-sales` has `gross`/`net`/`by_day`, `stock-position` has\n`rows` \u2014 so `extra=\"forbid\"` would make one model impossible. The envelope is what\nevery report shares and what the client relies on; the per-report figures are typed\nwhere a screen renders them field by field (`DailySalesOut`).",
         "properties": {
           "as_of": {
             "format": "date-time",
@@ -5258,7 +5882,7 @@
       },
       "StockEntryMatchOut": {
         "additionalProperties": false,
-        "description": "What saving this row would do, answered before anything is written.\n\n`kind` is one of:\n\n| `kind` | Meaning |\n|---|---|\n| `new` | No product has this name; saving creates one |\n| `existing` | One active product matches; saving **adds** to its stock |\n| `ambiguous` | Two or more match — the user must pick, nothing is guessed |\n| `inactive` | The match is withdrawn from the catalog; reactivate it first |",
+        "description": "What saving this row would do, answered before anything is written.\n\n`kind` is one of:\n\n| `kind` | Meaning |\n|---|---|\n| `new` | No product has this name; saving creates one |\n| `existing` | One active product matches; saving **adds** to its stock |\n| `ambiguous` | Two or more match \u2014 the user must pick, nothing is guessed |\n| `inactive` | The match is withdrawn from the catalog; reactivate it first |",
         "properties": {
           "candidates": {
             "items": {
@@ -5406,7 +6030,7 @@
       },
       "StockEntryRow": {
         "additionalProperties": false,
-        "description": "One row of the owner's four-column sheet: Item · Price · Min Qty · Stock Qty.",
+        "description": "One row of the owner's four-column sheet: Item \u00b7 Price \u00b7 Min Qty \u00b7 Stock Qty.",
         "properties": {
           "item": {
             "maxLength": 200,
@@ -5870,7 +6494,7 @@
       },
       "UnattendedRequest": {
         "additionalProperties": false,
-        "description": "No credentials — the device is the only thing the caller supplies.",
+        "description": "No credentials \u2014 the device is the only thing the caller supplies.",
         "properties": {
           "device": {
             "$ref": "#/components/schemas/DeviceInput"
@@ -6103,7 +6727,7 @@
     }
   },
   "info": {
-    "title": "National Auto Spares — Billing & Inventory API",
+    "title": "National Auto Spares \u2014 Billing & Inventory API",
     "version": "1.0.0"
   },
   "openapi": "3.1.0",
@@ -6484,7 +7108,7 @@
     },
     "/api/v1/admin/devices/{device_id}:revoke": {
       "post": {
-        "description": "Stops refresh immediately and refuses sync on every endpoint (T-4).\n\nLocal data on the device is **never** deleted in response — the client shows a\nblocking screen. Unsynced drafts are lost by design; they were never sales (E-11).",
+        "description": "Stops refresh immediately and refuses sync on every endpoint (T-4).\n\nLocal data on the device is **never** deleted in response \u2014 the client shows a\nblocking screen. Unsynced drafts are lost by design; they were never sales (E-11).",
         "operationId": "revoke_device_api_v1_admin_devices__device_id__revoke_post",
         "parameters": [
           {
@@ -7045,7 +7669,7 @@
     },
     "/api/v1/auth/change-password": {
       "post": {
-        "description": "Reachable while `must_change_password` is set — it is the one thing such a user\nmust be able to do.",
+        "description": "Reachable while `must_change_password` is set \u2014 it is the one thing such a user\nmust be able to do.",
         "operationId": "change_password_api_v1_auth_change_password_post",
         "parameters": [
           {
@@ -7313,7 +7937,7 @@
     },
     "/api/v1/auth/refresh": {
       "post": {
-        "description": "Rotates the token. Presenting a consumed one revokes the whole family\n(FR-AUTH-002) — a consumed token in the wild means the cookie was copied.",
+        "description": "Rotates the token. Presenting a consumed one revokes the whole family\n(FR-AUTH-002) \u2014 a consumed token in the wild means the cookie was copied.",
         "operationId": "refresh_api_v1_auth_refresh_post",
         "parameters": [
           {
@@ -7471,7 +8095,7 @@
     },
     "/api/v1/auth/unattended": {
       "post": {
-        "description": "Open a session with no password, when this server is configured to allow it.\n\nThe shop runs from one computer and wanted the application to open straight into\nbilling. This is how: the browser asks for a session, and a server that has been told\nto vouch for it issues an ordinary one.\n\n**Disabled unless somebody turns it on.** `BM_UNATTENDED_ACCESS` is off by default and\na server with it off refuses here, so no deployment acquires this by upgrading. When\nit is on, `BM_UNATTENDED_USERNAME` names the account the session belongs to — the\naudit trail still says who acted, and the row carries a reason recording that no\npassword was presented.\n\n**Nothing downstream changes.** The response is the same `SessionOut` a login returns,\nwith the same access token, the same rotating refresh cookie, the same permissions and\nthe same device registration. Every other endpoint still demands that token and still\nchecks its permissions; a revoked device is still refused here and everywhere else.\n\n**The risk, stated plainly:** anyone who can reach this endpoint gets a working\nsession. Enable it only where the network is already controlled — bound to localhost,\nor on a LAN the shop owns — never on a server reachable from the open internet.",
+        "description": "Open a session with no password, when this server is configured to allow it.\n\nThe shop runs from one computer and wanted the application to open straight into\nbilling. This is how: the browser asks for a session, and a server that has been told\nto vouch for it issues an ordinary one.\n\n**Disabled unless somebody turns it on.** `BM_UNATTENDED_ACCESS` is off by default and\na server with it off refuses here, so no deployment acquires this by upgrading. When\nit is on, `BM_UNATTENDED_USERNAME` names the account the session belongs to \u2014 the\naudit trail still says who acted, and the row carries a reason recording that no\npassword was presented.\n\n**Nothing downstream changes.** The response is the same `SessionOut` a login returns,\nwith the same access token, the same rotating refresh cookie, the same permissions and\nthe same device registration. Every other endpoint still demands that token and still\nchecks its permissions; a revoked device is still refused here and everywhere else.\n\n**The risk, stated plainly:** anyone who can reach this endpoint gets a working\nsession. Enable it only where the network is already controlled \u2014 bound to localhost,\nor on a LAN the shop owns \u2014 never on a server reachable from the open internet.",
         "operationId": "unattended_api_v1_auth_unattended_post",
         "parameters": [
           {
@@ -7890,7 +8514,7 @@
     },
     "/api/v1/credit/customers": {
       "get": {
-        "description": "The top level of the Credit Bills view (FR-CREDIT-011, FR-RPT-028).\n\nEvery aggregate is **server-computed** — the client never sums these as\nauthoritative (FR-RPT-030, ADR-032). Grouping keys on `customer_id`, so a rename\nchanges only the label (FR-RPT-029).",
+        "description": "The top level of the Credit Bills view (FR-CREDIT-011, FR-RPT-028).\n\nEvery aggregate is **server-computed** \u2014 the client never sums these as\nauthoritative (FR-RPT-030, ADR-032). Grouping keys on `customer_id`, so a rename\nchanges only the label (FR-RPT-029).",
         "operationId": "credit_customers_api_v1_credit_customers_get",
         "parameters": [
           {
@@ -8222,7 +8846,7 @@
     },
     "/api/v1/customers": {
       "get": {
-        "description": "The customer directory, newest first.\n\nAdded because there was no way to list customers at all. `GET /customers/search`\nneeds a term, and the only other read-many is `GET /credit/customers`, which\ninner-joins credit invoices — it answers \"who owes us money\" and is the top of the\nCredit Bills view. The Customers screen was reading from it, so a customer with no\ncredit invoice could not be seen or found there, and one created through\n`Add a customer` appeared to vanish.\n\nDeclared before `/{customer_id}` because FastAPI matches in declaration order and\n`\"\"` would otherwise be swallowed by the path-parameter route.\n\n`cursor` is opaque: the previous page's last `created_at` as epoch microseconds.\nDeliberately **not** ISO-8601 — an ISO timestamp with an offset contains a `+`, which\na query string decodes as a space, so a caller who pasted `next_cursor` straight into\na URL got a 422. Microseconds match PostgreSQL's `timestamptz` precision, sort as an\ninteger, and need no escaping.\n\nKeyset, not offset: a directory that grows while someone pages through it must not\nskip or repeat a row.",
+        "description": "The customer directory, newest first.\n\nAdded because there was no way to list customers at all. `GET /customers/search`\nneeds a term, and the only other read-many is `GET /credit/customers`, which\ninner-joins credit invoices \u2014 it answers \"who owes us money\" and is the top of the\nCredit Bills view. The Customers screen was reading from it, so a customer with no\ncredit invoice could not be seen or found there, and one created through\n`Add a customer` appeared to vanish.\n\nDeclared before `/{customer_id}` because FastAPI matches in declaration order and\n`\"\"` would otherwise be swallowed by the path-parameter route.\n\n`cursor` is opaque: the previous page's last `created_at` as epoch microseconds.\nDeliberately **not** ISO-8601 \u2014 an ISO timestamp with an offset contains a `+`, which\na query string decodes as a space, so a caller who pasted `next_cursor` straight into\na URL got a 422. Microseconds match PostgreSQL's `timestamptz` precision, sort as an\ninteger, and need no escaping.\n\nKeyset, not offset: a directory that grows while someone pages through it must not\nskip or repeat a row.",
         "operationId": "list_customers_api_v1_customers_get",
         "parameters": [
           {
@@ -8627,7 +9251,7 @@
         ]
       },
       "put": {
-        "description": "Needs no `Idempotency-Key` — the client-generated id makes it naturally\nidempotent (`API-SPECIFICATION.md §5`).",
+        "description": "Needs no `Idempotency-Key` \u2014 the client-generated id makes it naturally\nidempotent (`API-SPECIFICATION.md \u00a75`).",
         "operationId": "upsert_customer_api_v1_customers__customer_id__put",
         "parameters": [
           {
@@ -9541,7 +10165,7 @@
         ]
       },
       "post": {
-        "description": "Accept a file and queue it for parsing (FR-IMP-001/002/003/004).\n\n`202`, not `201`: the job exists but has not been read yet. The client polls\n`GET /imports/{id}` for the state machine, which is honest about what has actually\nhappened — a `201` would imply the rows are ready.",
+        "description": "Accept a file and queue it for parsing (FR-IMP-001/002/003/004).\n\n`202`, not `201`: the job exists but has not been read yet. The client polls\n`GET /imports/{id}` for the state machine, which is honest about what has actually\nhappened \u2014 a `201` would imply the rows are ready.",
         "operationId": "upload_import_api_v1_imports_post",
         "parameters": [
           {
@@ -9731,7 +10355,7 @@
     },
     "/api/v1/imports/{job_id}/report": {
       "get": {
-        "description": "Per-row outcome, retained for audit (FR-IMP-009).\n\nReturns every row with its result and reason — including the skipped ones, which are\nthe whole point. \"47 applied\" without \"and these 3 were skipped because the part\ncode matched nothing\" is a report that hides exactly what the reader needs.",
+        "description": "Per-row outcome, retained for audit (FR-IMP-009).\n\nReturns every row with its result and reason \u2014 including the skipped ones, which are\nthe whole point. \"47 applied\" without \"and these 3 were skipped because the part\ncode matched nothing\" is a report that hides exactly what the reader needs.",
         "operationId": "import_report_api_v1_imports__job_id__report_get",
         "parameters": [
           {
@@ -10212,7 +10836,7 @@
     },
     "/api/v1/imports/{job_id}:apply": {
       "post": {
-        "description": "Apply the accepted rows in one transaction (FR-IMP-008).\n\n`idempotency_key` is required by the API contract and accepted here; the job's own\nterminal `applied` state is what actually prevents a second application, which is\nthe stronger guarantee — it holds even for a client that generates a fresh key.",
+        "description": "Apply the accepted rows in one transaction (FR-IMP-008).\n\n`idempotency_key` is required by the API contract and accepted here; the job's own\nterminal `applied` state is what actually prevents a second application, which is\nthe stronger guarantee \u2014 it holds even for a client that generates a fresh key.",
         "operationId": "apply_import_api_v1_imports__job_id__apply_post",
         "parameters": [
           {
@@ -10637,7 +11261,7 @@
     },
     "/api/v1/inventory/movements": {
       "get": {
-        "description": "The append-only ledger (FR-INV-001) — one product's complete history.\n\nEvery movement is here, not only sales: the opening figure, each sheet arrival, each\ncorrection, each sale, and each reversal of a cancelled bill. `balance_after` is the\nstock the database actually held after that row, recorded when the movement was\nwritten — so the history is read from the ledger and never reconstructed backwards\nfrom today's total.\n\n`oldest_first=true` is what the History panel asks for, so the running balance reads\ndownwards.",
+        "description": "The append-only ledger (FR-INV-001) \u2014 one product's complete history.\n\nEvery movement is here, not only sales: the opening figure, each sheet arrival, each\ncorrection, each sale, and each reversal of a cancelled bill. `balance_after` is the\nstock the database actually held after that row, recorded when the movement was\nwritten \u2014 so the history is read from the ledger and never reconstructed backwards\nfrom today's total.\n\n`oldest_first=true` is what the History panel asks for, so the running balance reads\ndownwards.",
         "operationId": "list_movements_api_v1_inventory_movements_get",
         "parameters": [
           {
@@ -10761,7 +11385,7 @@
     },
     "/api/v1/inventory/movements/report": {
       "get": {
-        "description": "What moved in or out of stock on one day.\n\nThe per-product History answers \"what happened to this part\"; this answers \"what\nhappened today\", from the same append-only ledger — so the two can never disagree and\nnothing is recomputed from the current total.\n\n`kind=added` is every movement that **increased** stock: the opening figure, a\npurchase receipt, the owner's stock sheet, a correction upwards, a customer return, an\napplied import, and the reversal of a cancelled bill. `kind=sold` is `reason = 'sale'`\nalone — what customers took away.\n\nThree exclusions are structural rather than filtered, which is what makes them\nreliable: a **draft** writes no movement, a **reprint** writes no movement, and a\n**credit payment** moves money rather than goods. None of them can appear here\nwhatever this endpoint does.\n\n`stock_before` and `stock_after` are the ledger's own figures. The day is the\nbusiness-local one (`(created_at AT TIME ZONE …)::date`), the same boundary Daily\nBills uses, so the two screens agree on what \"today\" means.",
+        "description": "What moved in or out of stock on one day.\n\nThe per-product History answers \"what happened to this part\"; this answers \"what\nhappened today\", from the same append-only ledger \u2014 so the two can never disagree and\nnothing is recomputed from the current total.\n\n`kind=added` is every movement that **increased** stock: the opening figure, a\npurchase receipt, the owner's stock sheet, a correction upwards, a customer return, an\napplied import, and the reversal of a cancelled bill. `kind=sold` is `reason = 'sale'`\nalone \u2014 what customers took away.\n\nThree exclusions are structural rather than filtered, which is what makes them\nreliable: a **draft** writes no movement, a **reprint** writes no movement, and a\n**credit payment** moves money rather than goods. None of them can appear here\nwhatever this endpoint does.\n\n`stock_before` and `stock_after` are the ledger's own figures. The day is the\nbusiness-local one (`(created_at AT TIME ZONE \u2026)::date`), the same boundary Daily\nBills uses, so the two screens agree on what \"today\" means.",
         "operationId": "movement_report_api_v1_inventory_movements_report_get",
         "parameters": [
           {
@@ -10953,7 +11577,7 @@
     },
     "/api/v1/inventory/reconciliation:run": {
       "post": {
-        "description": "Runs the check now rather than waiting for the nightly job.\n\nStill read-only with respect to balances — it writes only its own report row.",
+        "description": "Runs the check now rather than waiting for the nightly job.\n\nStill read-only with respect to balances \u2014 it writes only its own report row.",
         "operationId": "run_reconciliation_api_v1_inventory_reconciliation_run_post",
         "parameters": [
           {
@@ -11037,7 +11661,7 @@
     },
     "/api/v1/inventory/stock-entries": {
       "post": {
-        "description": "Save a sheet of stock arrivals. **Adds to stock; never replaces it.**\n\nThe route declares `catalog.write` because a row may create a product;\n`StockEntryService` additionally re-asserts `inventory.adjust`, so a caller who may\nedit the catalog but not move stock is refused there rather than here.\n\nThe key is **claimed**, not merely required. Requiring the header and then ignoring it\nis worse than not asking for it: the caller is told the retry is safe while a second\npress books the delivery a second time, and because `stock_movements` can never be\ndeleted the only correction left is a third, opposite movement. `claim` runs before\nany stock is locked and `store_response` commits in the same transaction as the\nmovements, so a replay returns the first outcome verbatim (`§5.2.1`, `§5.2.8`).",
+        "description": "Save a sheet of stock arrivals. **Adds to stock; never replaces it.**\n\nThe route declares `catalog.write` because a row may create a product;\n`StockEntryService` additionally re-asserts `inventory.adjust`, so a caller who may\nedit the catalog but not move stock is refused there rather than here.\n\nThe key is **claimed**, not merely required. Requiring the header and then ignoring it\nis worse than not asking for it: the caller is told the retry is safe while a second\npress books the delivery a second time, and because `stock_movements` can never be\ndeleted the only correction left is a third, opposite movement. `claim` runs before\nany stock is locked and `store_response` commits in the same transaction as the\nmovements, so a replay returns the first outcome verbatim (`\u00a75.2.1`, `\u00a75.2.8`).",
         "operationId": "create_stock_entries_api_v1_inventory_stock_entries_post",
         "parameters": [
           {
@@ -11148,7 +11772,7 @@
     },
     "/api/v1/inventory/stock-entries:resolve": {
       "get": {
-        "description": "What would saving this item name do — add a new product, or top up an existing one?\n\nRead-only, and answered by the **same** matcher the save uses, so the screen's\n\"will update existing stock\" can never promise something the save then does\ndifferently (FR-INV-008, the owner's stock sheet).",
+        "description": "What would saving this item name do \u2014 add a new product, or top up an existing one?\n\nRead-only, and answered by the **same** matcher the save uses, so the screen's\n\"will update existing stock\" can never promise something the save then does\ndifferently (FR-INV-008, the owner's stock sheet).",
         "operationId": "resolve_stock_entry_api_v1_inventory_stock_entries_resolve_get",
         "parameters": [
           {
@@ -11244,7 +11868,7 @@
     },
     "/api/v1/invoices": {
       "get": {
-        "description": "Backs Daily Bills **and** Credit Bills — one dataset, two views (FR-RPT-003).",
+        "description": "Backs Daily Bills **and** Credit Bills \u2014 one dataset, two views (FR-RPT-003).",
         "operationId": "list_invoices_api_v1_invoices_get",
         "parameters": [
           {
@@ -11457,7 +12081,7 @@
     },
     "/api/v1/invoices/{invoice_id}": {
       "get": {
-        "description": "One bill with its lines.\n\n`credit.read` is accepted as well as `reports.sales.read` because this is how the\nCredit Bills folder shows what a customer actually bought on an invoice. Every\nseeded role holding `credit.read` happens to hold `reports.sales.read` too, so this\nchanges nothing for them — it stops a *custom* credit-only role from seeing a\ncustomer's bill list it may read and then a 403 on every bill in it.\n\nNo widening of what is returned: the cost snapshot still needs `catalog.cost.read`\nand is omitted, not nulled (FR-CAT-004), and `InvoiceReader.get` predicates on the\ncaller's `business_id` so a cross-tenant id is a 404.",
+        "description": "One bill with its lines.\n\n`credit.read` is accepted as well as `reports.sales.read` because this is how the\nCredit Bills folder shows what a customer actually bought on an invoice. Every\nseeded role holding `credit.read` happens to hold `reports.sales.read` too, so this\nchanges nothing for them \u2014 it stops a *custom* credit-only role from seeing a\ncustomer's bill list it may read and then a 403 on every bill in it.\n\nNo widening of what is returned: the cost snapshot still needs `catalog.cost.read`\nand is omitted, not nulled (FR-CAT-004), and `InvoiceReader.get` predicates on the\ncaller's `business_id` so a cross-tenant id is a 404.",
         "operationId": "get_invoice_api_v1_invoices__invoice_id__get",
         "parameters": [
           {
@@ -11647,7 +12271,7 @@
     },
     "/api/v1/invoices/{invoice_id}/print-payload": {
       "get": {
-        "description": "Everything needed to render the document (FR-PRINT-001).\n\n**A plain read.** It never calls a finalisation endpoint and creates nothing — no\nsale, no number, no movement.",
+        "description": "Everything needed to render the document (FR-PRINT-001).\n\n**A plain read.** It never calls a finalisation endpoint and creates nothing \u2014 no\nsale, no number, no movement.",
         "operationId": "get_print_payload_api_v1_invoices__invoice_id__print_payload_get",
         "parameters": [
           {
@@ -11751,6 +12375,222 @@
           }
         },
         "summary": "Get Print Payload",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/v1/invoices/{invoice_id}/revisions": {
+      "get": {
+        "description": "The edit history of one bill, newest first, with each before-state's lines.",
+        "operationId": "invoice_revisions_api_v1_invoices__invoice_id__revisions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invoice_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invoice Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceRevisionsOut",
+                  "additionalProperties": true,
+                  "title": "Response Invoice Revisions Api V1 Invoices  Invoice Id  Revisions Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invoice Revisions",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
+    "/api/v1/invoices/{invoice_id}:amend": {
+      "post": {
+        "description": "Edit a finalised bill **in place** (owner Decision A, 2026-11-07).\n\nKeeps the invoice's id and internal reference, writes the complete before-state to\n`invoice_revisions`, recomputes the money server-side, reconciles stock with new\nappend-only movements, and never touches a payment.\n\n`Idempotency-Key` is required, so a retried save applies once rather than writing a\nsecond revision and a second set of stock movements.\n\nRefuses, with its own error code each time: a stale `expected_version`\n(`409 INVOICE_VERSION_CONFLICT`), a cancelled bill (`409 INVOICE_NOT_EDITABLE`), and\na new total below what has already been paid (`409 EDIT_BELOW_PAID_TOTAL` \u2014 the\nowner's explicit rule; the correction there is a return or a credit note).",
+        "operationId": "amend_invoice_api_v1_invoices__invoice_id__amend_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invoice_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invoice Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AmendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AmendOut",
+                  "additionalProperties": true,
+                  "title": "Response Amend Invoice Api V1 Invoices  Invoice Id  Amend Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Amend Invoice",
         "tags": [
           "invoices"
         ]
@@ -11874,6 +12714,403 @@
         "summary": "Cancel Invoice",
         "tags": [
           "invoices"
+        ]
+      }
+    },
+    "/api/v1/mechanics": {
+      "get": {
+        "description": "Suggestions for the billing screen.\n\n**`query` is optional on purpose.** The field is focused before anything is typed,\nand the recently-used list is the most useful thing to show at that moment.",
+        "operationId": "list_mechanics_api_v1_mechanics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 120,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MechanicListOut",
+                  "additionalProperties": true,
+                  "title": "Response List Mechanics Api V1 Mechanics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Mechanics",
+        "tags": [
+          "mechanics"
+        ]
+      },
+      "post": {
+        "description": "Get-or-create by normalised name, and mark it used.\n\n`200`, not `201`: the common outcome is \"this mechanic already existed\", and a\nstatus code that claims a creation every time would be a lie the client then has to\nignore. `created` in the body carries the truth.",
+        "operationId": "ensure_mechanic_api_v1_mechanics_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MechanicEnsureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MechanicOut",
+                  "additionalProperties": true,
+                  "title": "Response Ensure Mechanic Api V1 Mechanics Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ensure Mechanic",
+        "tags": [
+          "mechanics"
+        ]
+      }
+    },
+    "/api/v1/mechanics/{mechanic_id}": {
+      "patch": {
+        "description": "Correct a spelling. Past bills keep their own snapshot and are unaffected.",
+        "operationId": "rename_mechanic_api_v1_mechanics__mechanic_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mechanic_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Mechanic Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MechanicRenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MechanicOut",
+                  "additionalProperties": true,
+                  "title": "Response Rename Mechanic Api V1 Mechanics  Mechanic Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Mechanic",
+        "tags": [
+          "mechanics"
+        ]
+      }
+    },
+    "/api/v1/mechanics/{mechanic_id}:deactivate": {
+      "post": {
+        "description": "Drop from the suggestions. Deliberately not a delete.",
+        "operationId": "deactivate_mechanic_api_v1_mechanics__mechanic_id__deactivate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mechanic_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Mechanic Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-counter-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Counter-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deactivate Mechanic",
+        "tags": [
+          "mechanics"
         ]
       }
     },
@@ -12059,7 +13296,7 @@
     },
     "/api/v1/notifications/alerting": {
       "get": {
-        "description": "Whether an operational alert would actually reach anybody (OD-19).\n\nBehind `audit.read` rather than open to any signed-in user: it reports on the\ndeployment's monitoring posture, which is an operator's concern, and the destination\nhint — even reduced to scheme and host — is infrastructure detail a counter hand has\nno reason to see.",
+        "description": "Whether an operational alert would actually reach anybody (OD-19).\n\nBehind `audit.read` rather than open to any signed-in user: it reports on the\ndeployment's monitoring posture, which is an operator's concern, and the destination\nhint \u2014 even reduced to scheme and host \u2014 is infrastructure detail a counter hand has\nno reason to see.",
         "operationId": "alerting_status_api_v1_notifications_alerting_get",
         "parameters": [
           {
@@ -12788,7 +14025,7 @@
     },
     "/api/v1/products/search": {
       "get": {
-        "description": "Minimum query length **1**. Results are ranked exact SKU → SKU prefix → name\nprefix → alias → trigram, with sales frequency then name as the tie-break.",
+        "description": "Minimum query length **1**. Results are ranked exact SKU \u2192 SKU prefix \u2192 name\nprefix \u2192 alias \u2192 trigram, with sales frequency then name as the tie-break.",
         "operationId": "search_products_api_v1_products_search_get",
         "parameters": [
           {
@@ -13595,7 +14832,7 @@
         ]
       },
       "post": {
-        "description": "Creates a `draft`. **No stock change** — recording a supplier's delivery note is\nnot the same as the goods being on the shelf.",
+        "description": "Creates a `draft`. **No stock change** \u2014 recording a supplier's delivery note is\nnot the same as the goods being on the shelf.",
         "operationId": "create_purchase_api_v1_purchases_post",
         "parameters": [
           {
@@ -13692,7 +14929,7 @@
     },
     "/api/v1/purchases/{purchase_id}:cancel": {
       "post": {
-        "description": "Only while `draft`. A confirmed receipt is immutable — correcting it is a\nsupplier return or an adjustment, not an edit.",
+        "description": "Only while `draft`. A confirmed receipt is immutable \u2014 correcting it is a\nsupplier return or an adjustment, not an edit.",
         "operationId": "cancel_purchase_api_v1_purchases__purchase_id__cancel_post",
         "parameters": [
           {
@@ -14092,7 +15329,7 @@
     },
     "/api/v1/reports/daily-sales": {
       "get": {
-        "description": "Counts, gross, discount, tax, net, and a breakdown by payment method.\n\n**Credit sales are included**, on their sale date (FR-RPT-001) — a credit sale is a\nsale, and excluding it would understate the day's trading.",
+        "description": "Counts, gross, discount, tax, net, and a breakdown by payment method.\n\n**Credit sales are included**, on their sale date (FR-RPT-001) \u2014 a credit sale is a\nsale, and excluding it would understate the day's trading.",
         "operationId": "daily_sales_api_v1_reports_daily_sales_get",
         "parameters": [
           {
@@ -14374,7 +15611,7 @@
     },
     "/api/v1/reports/reconciliation-check": {
       "get": {
-        "description": "Proves daily sales and credit outstanding describe the same money.\n\nA `reconciles: false` means `amount_paid` has drifted from the allocations, which is\nNFR-DATA-003 failing — it is reported, never auto-corrected.",
+        "description": "Proves daily sales and credit outstanding describe the same money.\n\nA `reconciles: false` means `amount_paid` has drifted from the allocations, which is\nNFR-DATA-003 failing \u2014 it is reported, never auto-corrected.",
         "operationId": "reconciliation_check_api_v1_reports_reconciliation_check_get",
         "parameters": [
           {
@@ -14795,7 +16032,7 @@
         ]
       },
       "post": {
-        "description": "Credits the **snapshot price** — what the customer paid, not today's price.\n\nDamaged goods, or an explicit `restock: false`, become **scrap** rather than\nsellable stock.",
+        "description": "Credits the **snapshot price** \u2014 what the customer paid, not today's price.\n\nDamaged goods, or an explicit `restock: false`, become **scrap** rather than\nsellable stock.",
         "operationId": "create_return_api_v1_returns_post",
         "parameters": [
           {
@@ -15206,7 +16443,7 @@
     },
     "/api/v1/sync/bootstrap": {
       "get": {
-        "description": "One call after login.\n\nPublishes the **money policy** so the client never hardcodes a rounding rule, the\nclient-visible settings, the print profile and the date order — and states plainly\nthat offline finalisation is refused, so the client can show the reason rather than\ninventing one.",
+        "description": "One call after login.\n\nPublishes the **money policy** so the client never hardcodes a rounding rule, the\nclient-visible settings, the print profile and the date order \u2014 and states plainly\nthat offline finalisation is refused, so the client can show the reason rather than\ninventing one.",
         "operationId": "bootstrap_api_v1_sync_bootstrap_get",
         "parameters": [
           {
@@ -15291,7 +16528,7 @@
     },
     "/api/v1/sync/catalog": {
       "get": {
-        "description": "A bounded delta for the offline cache.\n\n**`cost_price` is never included, regardless of permission** — a stolen counter\nmachine must not carry the shop's margins (`SECURITY.md §11`).",
+        "description": "A bounded delta for the offline cache.\n\n**`cost_price` is never included, regardless of permission** \u2014 a stolen counter\nmachine must not carry the shop's margins (`SECURITY.md \u00a711`).",
         "operationId": "catalog_delta_api_v1_sync_catalog_get",
         "parameters": [
           {
@@ -15489,7 +16726,7 @@
     },
     "/api/v1/sync/operations": {
       "post": {
-        "description": "Apply a bounded batch of safe offline operations.\n\nA bad operation never blocks the rest of the batch, except that operations for the\n**same entity** stop at the first failure to preserve ordering — a later edit\napplied before an unresolved earlier one would silently reorder the user's work.",
+        "description": "Apply a bounded batch of safe offline operations.\n\nA bad operation never blocks the rest of the batch, except that operations for the\n**same entity** stop at the first failure to preserve ordering \u2014 a later edit\napplied before an unresolved earlier one would silently reorder the user's work.",
         "operationId": "apply_operations_api_v1_sync_operations_post",
         "parameters": [
           {

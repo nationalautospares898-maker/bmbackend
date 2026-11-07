@@ -21,6 +21,7 @@ Environment = Literal["local", "test", "staging", "production"]
 StorageBackend = Literal["local", "s3"]
 LogFormat = Literal["json", "console"]
 AlertSeverity = Literal["info", "warning", "critical"]
+RefreshCookieSameSite = Literal["lax", "strict", "none"]
 
 
 class ConfigError(RuntimeError):
@@ -55,6 +56,31 @@ class Settings(BaseSettings):
     refresh_token_ttl_days: int = Field(default=30, ge=1, le=365)
     password_pepper: SecretStr
     ip_hash_pepper: SecretStr
+
+    # --- refresh cookie --------------------------------------------------------
+    #
+    # `lax` is the default and **is** the CSRF control described in `api/v1/auth.py`:
+    # every other endpoint authenticates with a bearer header, so a cross-site form post
+    # cannot act as the user, and the one cookie endpoint is additionally bound to
+    # `X-Device-Id`. Nothing about that reasoning changes here, and nothing changes for
+    # any deployment that leaves this alone.
+    #
+    # It exists because `SameSite` compares the **registrable domain**, not the origin,
+    # and that decides whether the refresh cookie is sent at all:
+    #
+    #   * `app.example.com` → `api.example.com`  — same site. `lax` works. Use `lax`.
+    #   * `nas.vercel.app`  → `nas.up.railway.app` — **cross**-site, because `vercel.app`
+    #     and `up.railway.app` are both public suffixes. A `lax` cookie is never sent, so
+    #     `POST /auth/refresh` arrives with no cookie, every cold start lands on the sign-in
+    #     form, and the session dies 15 minutes after each login (the access-token TTL).
+    #
+    # So a split front end and API on two *provider* domains needs `none`, which browsers
+    # only accept alongside `Secure` — hence the validator below refusing it on `local`,
+    # where `Secure` is deliberately dropped for plain-HTTP development.
+    #
+    # Prefer two subdomains of one owned domain and leave this at `lax`. Reach for `none`
+    # only when that is not available; see `docs/PRODUCTION-DEPLOYMENT-GUIDE.md §10`.
+    refresh_cookie_samesite: RefreshCookieSameSite = "lax"
 
     # --- unattended access -----------------------------------------------------
     #
@@ -164,6 +190,22 @@ class Settings(BaseSettings):
             raise ValueError(
                 "BM_UNATTENDED_ACCESS is on, so BM_UNATTENDED_USERNAME must name the "
                 "account those sessions belong to."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _samesite_none_requires_a_secure_cookie(self) -> Settings:
+        """`SameSite=None` without `Secure` is rejected by every current browser.
+
+        `api/v1/auth.py` sets `secure=env != "local"`, so the two settings can only
+        disagree in one direction, and it is refused at startup rather than producing a
+        cookie the browser silently drops — a failure that looks exactly like a working
+        login followed by an inexplicable sign-out fifteen minutes later.
+        """
+        if self.refresh_cookie_samesite == "none" and self.env == "local":
+            raise ValueError(
+                "BM_REFRESH_COOKIE_SAMESITE=none requires a Secure cookie, which is not "
+                "set when BM_ENV=local. Use `lax` locally."
             )
         return self
 

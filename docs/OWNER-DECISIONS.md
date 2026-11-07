@@ -102,7 +102,7 @@ this register, because none has been given.**
 | [OD-7](#od-7) | Money precision and rounding | 🟡 **Principles selected; precision & method UNDECIDED** → **BLOCKS-TESTING** (the policy *values* + expected-value assertions; the engine is buildable parameterised by a policy object — P2-D-03) | Owner + accountant |
 | [OD-8](#od-8) | Offline expectation — drafts vs billing | **BLOCKS-GO-LIVE** (staff training) | Owner |
 | [OD-9](#od-9) | Draft stock reservation | NON-BLOCKING | Owner |
-| [OD-10](#od-10) | Who may cancel an invoice, and for how long | NON-BLOCKING | Owner |
+| [OD-10](#od-10) | Who may cancel an invoice, and for how long | NON-BLOCKING. ⚠️ **Immutability RE-ANSWERED 2026-11-07** — controlled in-place editing is permitted, with an immutable revision trail; cancellation unchanged | Owner *(granted)* |
 | [OD-11](#od-11) | Returns accepted, and within what window | NON-BLOCKING | Owner |
 | [OD-12](#od-12) | Credit terms and credit limits | NON-BLOCKING | Owner |
 | [OD-13](#od-13) | Cashier discount authority | NON-BLOCKING | Owner |
@@ -803,8 +803,54 @@ removal or timeout · (c) No reservation, but *show* "N in other open bills".
 
 **Question.** Who can cancel a finalised bill, and within what time?
 
-**Already confirmed.** Issued invoices are **immutable**; cancellation reverses stock and issues a
-full credit note, keeps the invoice number, and is audited. There is no edit path, ever.
+> ### ⚠️ RE-ANSWERED 2026-11-07 — controlled in-place editing is now permitted
+>
+> The owner reversed the immutability half of this decision (Decision A of the
+> 2026-11-07 change request). **A finalised invoice may now be edited in place**, keeping
+> its identity, by a user holding `billing.sale.edit`.
+>
+> What replaced "the row never changes" is a different guarantee, not the absence of one:
+>
+> > **Every state an invoice has ever been in is permanently recorded.**
+>
+> * `invoice_revisions` / `invoice_revision_items` (migration 0024) hold the complete
+>   before-state of every edit — header, customer, mechanic, notes, every line with its
+>   quantities and prices, the totals, the payment state, the editor, the time and a
+>   mandatory reason. Both tables are `SELECT, INSERT` only for the application role, so
+>   the history cannot be rewritten by any code path.
+> * **Identity is preserved.** `invoice_number`, `sequence_number`, `invoice_series_id`
+>   and `issued_at` are absent from the column-level `UPDATE` grant, so an edit cannot
+>   change them even by mistake.
+> * **Payments are never touched.** `amount_paid` is re-derived from the untouched
+>   allocations; no payment row is written by the edit path.
+> * **Stock is corrected by new append-only movements.** `stock_movements` keeps its
+>   blanket revoke from 0007.
+> * **An edit cannot reduce a bill below what has been paid** — `EDIT_BELOW_PAID_TOTAL`,
+>   refused outright. There is no refund entity in this schema and inventing one was
+>   expressly excluded, so the correction there is a return or a credit note.
+> * `invoices` still has **no `DELETE` grant**. An invoice is never removed.
+>
+> Stated plainly, because it is the cost of the decision: the protection against a staff
+> member quietly altering a sale moves from *"the database refuses"* to *"the database
+> keeps the evidence"*. The evidence is immutable; the current figures are not. Threat
+> **T-1** in `SECURITY.md` is now mitigated by an append-only revision trail and an audit
+> row rather than by impossibility.
+>
+> Cancellation, returns and credit notes are **unchanged** (Decision C) and remain the
+> right correction when a sale should not have happened at all. The screen action for it
+> was renamed `Edit Bill` → **`Cancel & Re-bill`**, because two actions called "Edit Bill"
+> was ambiguous once real editing existed.
+>
+> Implemented in: migration `0024`, `domain/sales/amend.py`,
+> `POST /invoices/{id}:amend`, `GET /invoices/{id}/revisions`,
+> `features/reports/EditBill.tsx`. Tested in `tests/api/test_invoice_amend.py` (30
+> cases), `src/features/reports/editBill.test.tsx` (22) and two real-browser workflows.
+
+**Previously confirmed, now superseded in part.** Issued invoices were **immutable**;
+cancellation reverses stock and issues a full credit note, keeps the invoice number, and
+is audited. ~~There is no edit path, ever.~~ — withdrawn 2026-11-07, see above.
+
+**Who may cancel, and for how long, is unchanged by that reversal.**
 
 **Options.** (a) Manager and owner, 24-hour window · (b) Owner only, any time · (c) Cashier, same
 shift only.

@@ -115,8 +115,14 @@ def create_user(
     is_active: bool = True,
     must_change_password: bool = False,
     register_device: bool = True,
+    role_id: uuid.UUID | None = None,
 ) -> UserFixture:
-    """Create a user with a seeded system role and a registered device."""
+    """Create a user with a seeded system role and a registered device.
+
+    `role_id` overrides `role` with a **custom** (business-scoped) role, which is how a
+    test can exercise a permission set no system role has — the case that matters when a
+    route accepts either of two permissions.
+    """
     user_id = uuid.uuid4()
     device_id = uuid.uuid4()
     branch_id = None if all_branches else tenant.branch_id
@@ -149,7 +155,7 @@ def create_user(
             "user_id": user_id,
             "business_id": tenant.business_id,
             "branch_id": branch_id,
-            "role_id": system_role_id(role),
+            "role_id": role_id if role_id is not None else system_role_id(role),
         },
     )
     if register_device:
@@ -201,6 +207,10 @@ BUSINESS_DATA_TABLES = (
     "credit_notes",
     "payments",
     "print_log",
+    # Child-to-parent: revision items reference revisions, revisions reference invoices,
+    # and every foreign key into a financial row is RESTRICT rather than CASCADE.
+    "invoice_revision_items",
+    "invoice_revisions",
     "invoice_items",
     "draft_bill_items",
     "draft_bills",
@@ -220,6 +230,9 @@ BUSINESS_DATA_TABLES = (
     "customer_vehicles",
     "customer_phones",
     "customers",
+    # Reference data, but still business-scoped: a leftover row holds a RESTRICT
+    # foreign key on `businesses` and makes the next test's teardown fail.
+    "mechanics",
     "product_prices",
     "product_aliases",
     "products",

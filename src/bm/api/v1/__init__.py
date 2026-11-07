@@ -25,6 +25,7 @@ _ROUTER_MODULES: tuple[str, ...] = (
     "catalog",  # M5 — products, aliases, search
     "inventory",  # M6 — balances, ledger, adjustments, reconciliation
     "customers",  # M7
+    "mechanics",  # M27 - the reusable mechanic list the billing screen suggests from
     "drafts",  # M8
     "sales",  # M10 — the single finalisation endpoint, cash and credit
     "credit",  # M11 — payments, allocations, credit views

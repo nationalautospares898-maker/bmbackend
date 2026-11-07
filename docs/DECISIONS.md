@@ -463,8 +463,14 @@ record-keeping.
 <a id="adr-015"></a>
 ## ADR-015 — Financial records are immutable; corrections are reversals
 
-**Status** proposed · **Owner** shared · **Owner approval: YES (Q-BIZ-8)** · **Related** FR-SALE-010/011,
-FR-PAY-005, FR-RET-002, NFR-DATA-006, T-1
+> ⚠️ **Superseded in part by [ADR-034](#adr-034) (2026-11-07).** In-place editing of a
+> finalised invoice is now permitted, under an append-only revision trail. Everything
+> below about **cancellation, returns, credit notes and reversals** stands unchanged and
+> remains the correction for a sale that should not have happened (owner Decision C).
+> What no longer holds is the blanket "no edit path, ever".
+
+**Status** superseded in part by ADR-034 · **Owner** shared · **Owner approval: YES (Q-BIZ-8)** ·
+**Related** FR-SALE-010/011, FR-PAY-005, FR-RET-002, NFR-DATA-006, T-1
 
 **Context.** Mistakes happen at a counter: wrong quantity, wrong customer, wrong price, duplicate
 payment. The owner needs them fixable; the business needs an audit trail.
@@ -720,3 +726,73 @@ and who may cancel), ADR-020 (tax mode).
 `docs/PRD.md` · `docs/ARCHITECTURE.md` · `docs/DATA-MODEL.md` · `docs/API-SPECIFICATION.md` ·
 `docs/SECURITY.md` · `docs/OFFLINE-SYNCHRONIZATION.md` · `docs/TESTING-STRATEGY.md` ·
 `docs/DEPLOYMENT.md` · `docs/TRACEABILITY.md` · `../../bmfrontend/docs/DECISIONS.md`
+
+---
+
+<a id="adr-034"></a>
+## ADR-034 — In-place invoice editing, under an append-only revision trail
+
+**Status** accepted · **Owner** owner · **Owner approval: YES (Decision A, 2026-11-07)** ·
+**Supersedes in part** ADR-015, OD-10 · **Related** FR-SALE-010, FR-SALE-016, NFR-DATA-006, T-1
+
+**Context.** OD-10 said "there is no edit path, ever", and migration `0011` enforced it by revoking
+`UPDATE` on `invoices` and `invoice_items` from `bm_app`. The only correction was cancel-and-rebill,
+which produces two invoices for one sale. The owner found that unworkable for the common case — "the
+customer took one more item off the shelf" — and reversed the decision, requiring that an ordinary
+edit keep the bill's identity.
+
+**Decision.** A finalised invoice may be edited in place by a holder of `billing.sale.edit`
+(owner and manager; **not** cashier). The invariant that replaces immutability-of-row is:
+
+> Every state an invoice has ever been in is permanently recorded.
+
+**How it is enforced, not merely intended.**
+
+| Guarantee | Mechanism |
+|---|---|
+| The history cannot be rewritten | `invoice_revisions`, `invoice_revision_items` are `SELECT, INSERT` only for `bm_app` (migration 0024) |
+| Identity cannot change | `invoice_number`, `sequence_number`, `invoice_series_id`, `issued_at` are outside the column-level `UPDATE` grant |
+| An invoice cannot be removed | `invoices` has no `DELETE` grant |
+| Payments are untouched | the amend path writes no `payments`/`payment_allocations` row; `amount_paid` is re-derived from the allocations |
+| Stock stays truthful | reconciled by **new** movements for the net change per product; `stock_movements` keeps its blanket revoke |
+| No negative balance, no silent refund | an edit below `amount_paid` is refused with `EDIT_BELOW_PAID_TOTAL` |
+| Concurrent edits do not overwrite | `invoices.version`, compared **under the row lock** |
+| A retried save applies once | `Idempotency-Key` claimed and the response stored in the same transaction |
+| Nothing happens silently | mandatory reason (≥5 chars, also a DB `CHECK`), plus an `invoice.amended` audit row with before/after totals |
+
+**Consequences, including the one that costs something.**
+
+- The anti-fraud protection for threat **T-1** changes character: from *"the database refuses"* to
+  *"the database keeps the evidence"*. A staff member can now alter a sale, and cannot do so
+  without leaving an immutable record of what it said before, who changed it, when and why. That is
+  weaker than impossibility and stronger than nothing, and it is the trade the owner accepted
+  explicitly.
+- **No refund mechanism was invented.** Reducing a paid bill is refused rather than resolved,
+  because the alternative — inventing a refund or an on-account credit — is an accounting decision
+  this project has not been given. The sanctioned route stays ADR-015's return / credit note.
+- Cancel-and-rebill remains, renamed on screen to **`Cancel & Re-bill`** so that two actions are not
+  both called "Edit Bill".
+- The movement ledger reuses `sale` / `sale_cancellation` for an edit's net increase / decrease
+  rather than gaining new reasons. The physical event is identical, and it keeps the existing
+  movement report (`kind=sold` is `reason = 'sale'`; `kind=added` is any positive delta) correct
+  with no change. Why an edit happened lives on the revision row and in the audit log.
+
+**Alternatives rejected.**
+
+- *Keep OD-10 and improve cancel-and-rebill.* Rejected by the owner: two invoices for one sale is
+  the thing being complained about.
+- *Plain `UPDATE` with an audit row only.* Rejected here: an audit row records that a change
+  happened, not what the bill said line by line before it, which is what a dispute needs.
+- *Soft-delete lines with `superseded_at` in `invoice_items`.* Rejected: it would make every one of
+  the 13 existing read sites responsible for a `WHERE superseded_at IS NULL` filter, and the first
+  one forgotten silently doubles a bill.
+
+### 2026-11-07 implementation note — catalogue additions and audited stock shortfalls
+
+This implements the existing `FR-SALE-008` / `FR-INV-005` contract: product creation from billing is
+catalogue-only and stock-neutral. The browser first presents the ordinary sale attempt; if the
+server refuses for insufficient stock, a permitted user can explicitly retry with a reason of at
+least 10 characters. The API independently enforces permission and reason. The invoice, negative
+stock movement and audit record retain the flag and reason. Cash and credit use the same
+finalisation transaction. This records implementation behavior, not a new owner decision or a
+change to the separately recorded no-overselling requirement.

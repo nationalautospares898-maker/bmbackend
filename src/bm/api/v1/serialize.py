@@ -51,6 +51,11 @@ def invoice_dict(record: InvoiceRecord, *, may_see_cost: bool) -> dict[str, Any]
             "mechanic_name_snapshot": record.mechanic_name_snapshot,
             "phone_snapshot": record.phone_snapshot,
         },
+        # The bill's note, so the Credit Bills viewer can show the whole bill rather
+        # than a summary of it.
+        "notes": record.notes,
+        # The concurrency token an edit must send back (migration 0024).
+        "version": record.version,
         "items": [
             {
                 # The line and the product it sold. Needed by a correction: `POST

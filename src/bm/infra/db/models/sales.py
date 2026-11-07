@@ -295,6 +295,10 @@ class Invoice(Base):
     #: T3-03. Persisted at issue time so a disputed historical bill can be explained
     #: under the rule that produced it. A policy change never alters a stored invoice.
     money_policy_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Optimistic concurrency for in-place editing (migration 0024). An amend sends the
+    #: version it read; a mismatch under the row lock is a stale edit and is refused
+    #: rather than overwriting a concurrent change.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
 
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -329,6 +333,7 @@ class Invoice(Base):
         CheckConstraint(
             "NOT is_credit OR customer_id IS NOT NULL", name="ck_invoices__credit_customer"
         ),
+        CheckConstraint("version >= 1", name="ck_invoices__version"),
         CheckConstraint(
             "(status = 'cancelled') = (cancelled_at IS NOT NULL)",
             name="ck_invoices__cancel_fields",

@@ -34,7 +34,7 @@ services:
     command: ["alembic", "upgrade", "head"]
     environment:
       # Only this container gets the DDL-capable credential.
-      BM_MIGRATION_DATABASE_URL: postgresql+psycopg://bm_migrate:bm_migrate_local_only@postgres:5432/bm
+      BM_MIGRATION_DATABASE_URL: postgresql+psycopg://bm_migrate:bm_migrate_local_only@postgres:5432/${BM_LOCAL_DATABASE_NAME:-bm}
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,7 +46,7 @@ services:
       target: runtime
     environment:
       BM_ENV: local
-      BM_DATABASE_URL: postgresql+psycopg://bm_app:bm_app_local_only@postgres:5432/bm
+      BM_DATABASE_URL: postgresql+psycopg://bm_app:bm_app_local_only@postgres:5432/${BM_LOCAL_DATABASE_NAME:-bm}
       BM_JWT_SIGNING_KEY: local-development-only-signing-key-not-a-secret
       BM_PASSWORD_PEPPER: local-development-only-password-pepper-xxx
       BM_IP_HASH_PEPPER: local-development-only-ip-hash-pepper-xxxx
@@ -63,14 +63,68 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # The **test** API: a second process, on its own port, against its own database.
+  #
+  # Why this exists. The browser acceptance suite drives a real API and writes real rows
+  # — products, invoices, payments, stock movements. Until now it drove the API on 8000,
+  # which is the one the owner's application uses, so every acceptance run deposited test
+  # data into the shop's own database. With the owner's real business now living in `bm`
+  # that is no longer merely untidy; it would be writing invented invoices into their
+  # books.
+  #
+  # Separating by **process and database**, rather than by convention, is what makes it
+  # impossible rather than discouraged: this container cannot reach `bm` because it has
+  # no credential for it.
+  #
+  # Behind a profile, so `docker compose up -d` still brings up only the shop's stack.
+  # Start it with:  docker compose --profile e2e up -d api-e2e
+  api-e2e:
+    profiles: ["e2e"]
+    build:
+      context: .
+      target: runtime
+    environment:
+      BM_ENV: local
+      BM_DATABASE_URL: postgresql+psycopg://bm_app:bm_app_local_only@postgres:5432/bm_e2e
+      BM_JWT_SIGNING_KEY: local-development-only-signing-key-not-a-secret
+      BM_PASSWORD_PEPPER: local-development-only-password-pepper-xxx
+      BM_IP_HASH_PEPPER: local-development-only-ip-hash-pepper-xxxx
+      BM_CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:4173,http://localhost:4273
+      BM_ENABLE_API_DOCS: "true"
+      BM_LOG_FORMAT: console
+      BM_STORAGE_BACKEND: local
+      BM_STORAGE_PATH: /var/lib/bm/storage
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   worker:
     build:
       context: .
       target: runtime
     command: ["python", "-m", "bm.worker"]
+    # The image's healthcheck curls `/healthz`, which only the **API** serves — so the
+    # worker reported `unhealthy` for its whole life while running perfectly and logging
+    # `worker_started`. A permanently-red container is worse than no check: it trains
+    # everyone to ignore the column that is supposed to mean something.
+    #
+    # Replaced with a check of the thing that actually matters for this process: that it
+    # can reach the database it polls for jobs.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os,psycopg; psycopg.connect(os.environ['BM_DATABASE_URL'].replace('postgresql+psycopg://','postgresql://')).close()\" || exit 1",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     environment:
       BM_ENV: local
-      BM_DATABASE_URL: postgresql+psycopg://bm_app:bm_app_local_only@postgres:5432/bm
+      BM_DATABASE_URL: postgresql+psycopg://bm_app:bm_app_local_only@postgres:5432/${BM_LOCAL_DATABASE_NAME:-bm}
       BM_JWT_SIGNING_KEY: local-development-only-signing-key-not-a-secret
       BM_PASSWORD_PEPPER: local-development-only-password-pepper-xxx
       BM_IP_HASH_PEPPER: local-development-only-ip-hash-pepper-xxxx

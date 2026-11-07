@@ -265,7 +265,11 @@ class CatalogService:
         hsn_code: str | None = None,
         product_id: uuid.UUID | None = None,
     ) -> ProductView:
-        ctx.require(Permission.CATALOG_WRITE)
+        # Re-asserted here as well as on the route, because the service is reachable from
+        # the stock-entry path too. Either permission creates (Decision B); only
+        # `catalog.write` edits or withdraws.
+        if not (ctx.has(Permission.CATALOG_CREATE) or ctx.has(Permission.CATALOG_WRITE)):
+            ctx.require(Permission.CATALOG_CREATE)
 
         clean_name = name.strip()
         if not clean_name:

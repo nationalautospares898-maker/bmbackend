@@ -17,7 +17,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import Field
 
-from bm.api.deps import CurrentContext, ReadSession, WriteSession, require
+from bm.api.deps import CurrentContext, ReadSession, WriteSession, require, require_any
 from bm.api.v1.schemas.common import ResponseModel, StrictModel
 from bm.api.v1.schemas.responses import ProductOut, ProductSearchOut
 from bm.domain.auth.permissions import Permission
@@ -170,7 +170,15 @@ def get_product(
 def create_product(
     body: ProductCreateRequest,
     session: WriteSession,
-    ctx: Annotated[CurrentContext, Depends(require(Permission.CATALOG_WRITE))],
+    ctx: Annotated[
+        CurrentContext,
+        # **Either** permission (Decision B, 2026-11-07). `catalog.create` is the narrow
+        # one a cashier holds so they can add a missing part at the counter;
+        # `catalog.write` is accepted as well so a *custom* role that was granted only
+        # the broad permission does not lose the ability to create. Editing and
+        # withdrawing still require `catalog.write` alone — see the routes below.
+        Depends(require_any(Permission.CATALOG_CREATE, Permission.CATALOG_WRITE)),
+    ],
 ) -> dict[str, Any]:
     view = CatalogService(session).create_product(
         ctx,

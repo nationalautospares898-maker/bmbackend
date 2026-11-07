@@ -131,7 +131,7 @@ response schemas live in the generated OpenAPI document; the shapes below are th
 |---|---|---|
 | `GET /products/search?query=&limit=&cursor=&include_inactive=` | `catalog.read` | **The autocomplete endpoint.** Minimum query length **1** (FR-CAT-003) |
 | `GET /products/{id}` | `catalog.read` | |
-| `POST /products` | `catalog.write` | `Idempotency-Key` optional but honoured |
+| `POST /products` | `catalog.create` **or** `catalog.write` | `Idempotency-Key` optional but honoured |
 | `PATCH /products/{id}` | `catalog.write` | Price change is audited with before/after |
 | `POST /products/{id}/aliases` · `DELETE /products/{id}/aliases/{alias_id}` | `catalog.write` | |
 | `POST /products/{id}:deactivate` | `catalog.write` | Never deletes (FR-CAT-009) |
@@ -240,6 +240,12 @@ Permission `billing.sale.finalize`. **`Idempotency-Key` required.**
   unambiguous. `draft_version` must match the server's draft, otherwise `409`.
 - `client_computed_total` is a **cross-check only** (FR-SALE-003).
 - `oversell_override`: `{ "reason": "Customer waiting, stock miscount, verified physically" }`.
+  This is accepted only for an actor with `inventory.oversell.override`; the reason must contain at least 10
+  characters. A rejected first attempt creates no invoice or stock movement. An approved retry
+  records the flag and reason on the invoice, stock movement, and audit log. Catalog product
+  creation itself never records stock. The browser asks for explicit approval only after the
+  ordinary request is refused; this interaction order is a frontend safeguard, while permission
+  and reason validation are authoritative at the API.
 
 **Response `201`:**
 ```json
@@ -301,8 +307,13 @@ Permission `billing.sale.finalize`. **`Idempotency-Key` required.**
 | `GET /invoices/{id}/print-payload?copy=reprint` | `reports.sales.read` | Everything needed to render the document (FR-PRINT-001) |
 | `POST /invoices/{id}:cancel` | `billing.sale.cancel` | `{ "reason": "…" }`, `Idempotency-Key` required (FR-SALE-011) |
 | `POST /invoices/{id}/print-events` | `reports.sales.read` | Records a print attempt (FR-PRINT-004); failure to log never blocks printing |
+| `POST /invoices/{id}:amend` | `billing.sale.edit` | **In-place edit** (owner Decision A, 2026-11-07; ADR-034). `{ expected_version, reason, lines[], header?, oversell_reason? }`, **`Idempotency-Key` required**. Keeps the invoice's id and reference; writes the before-state to `invoice_revisions` first; never writes a payment; corrects stock with new movements. Refuses: `409 INVOICE_VERSION_CONFLICT` (stale `expected_version`), `409 INVOICE_NOT_EDITABLE` (cancelled bill), `409 EDIT_BELOW_PAID_TOTAL` (new total under `amount_paid` — use a return or credit note) |
+| `GET /invoices/{id}/revisions` | `reports.sales.read` **or** `credit.read` | The bill's edit history, newest first, each with its own lines. Append-only at privilege level (FR-SALE-016) |
 
-**There is deliberately no `PUT`/`PATCH`/`DELETE` on invoices or invoice items** (FR-SALE-010).
+**There is deliberately no `PUT`/`PATCH`/`DELETE` on invoices or invoice items.**
+`POST /invoices/{id}:amend` is the single sanctioned mutation (FR-SALE-010 as amended
+2026-11-07) and exists only because it records an immutable before-state first. An invoice
+is **never deleted** — `invoices` carries no `DELETE` grant for the application role.
 
 **`print_payload` shape** — the backend decides the content, the frontend decides the pixels:
 ```json
