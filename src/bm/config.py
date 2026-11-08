@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import functools
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -26,6 +27,25 @@ RefreshCookieSameSite = Literal["lax", "strict", "none"]
 
 class ConfigError(RuntimeError):
     """Raised when the environment cannot produce a usable configuration."""
+
+
+#: Public suffixes on which every customer gets their own subdomain, so two services
+#: hosted on the same one are still **cross-site** to `SameSite`. Used only to warn about
+#: `cross_site_refresh_cookie_origins`; it never changes behaviour, so an absent entry
+#: costs a warning rather than correctness.
+_PROVIDER_SUFFIXES = frozenset(
+    {
+        "vercel.app",
+        "up.railway.app",
+        "railway.app",
+        "netlify.app",
+        "pages.dev",
+        "onrender.com",
+        "fly.dev",
+        "herokuapp.com",
+        "azurewebsites.net",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -213,6 +233,40 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Explicit allow-list. A wildcard is never produced (`SECURITY.md §6`)."""
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def cross_site_refresh_cookie_origins(self) -> list[str]:
+        """Front-end origins that will **never** send the refresh cookie as configured.
+
+        This is the misconfiguration that produced the owner's "it logs me out after
+        every 13 minutes": `SameSite` compares the **registrable domain**, and
+        `vercel.app`, `up.railway.app` and friends are public suffixes, so a front end on
+        one provider domain and an API on another are **cross-site**. A `lax` cookie is
+        then never sent to `POST /auth/refresh`, the access token dies at
+        `access_token_ttl_seconds`, and the cashier is signed out mid-bill.
+
+        13 minutes, specifically, because the client renews two minutes ahead of a
+        fifteen-minute token — so the failure lands on the renewal, not on the expiry.
+
+        Detection is deliberately narrow, so it cannot cry wolf on a correct deployment:
+
+        * **Topology A** (`app.example.com` + `api.example.com`) — the origin is not on a
+          provider domain, so nothing is reported and `lax` is right.
+        * **Topology B** (`*.vercel.app` + `*.up.railway.app`) — reported, which is the
+          bug. The fix is `BM_REFRESH_COOKIE_SAMESITE=none`.
+        * **Topology C** (Vercel proxies `/api/*`) — the browser sees one origin, so the
+          allow-list is empty and nothing is reported. `lax` is right there too.
+
+        Returns the offending origins rather than a bool so the warning can name them.
+        """
+        if not self.is_production or self.refresh_cookie_samesite != "lax":
+            return []
+        offenders = []
+        for origin in self.cors_origins:
+            host = urlsplit(origin).hostname or ""
+            if any(host == suffix or host.endswith(f".{suffix}") for suffix in _PROVIDER_SUFFIXES):
+                offenders.append(origin)
+        return offenders
 
     @property
     def is_production(self) -> bool:

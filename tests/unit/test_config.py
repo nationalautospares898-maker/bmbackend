@@ -159,3 +159,81 @@ def test_no_business_rule_is_configurable_through_the_environment() -> None:
         f"{offenders} look like business rules. They belong in the database `settings` "
         "table, not in environment configuration."
     )
+
+
+# --- the 13-minute logout -----------------------------------------------------------
+#
+# The owner reported *"it's logging out after every 13 min and the work I was doing was
+# gone"*. The cause was configuration, not code: a `lax` refresh cookie between two
+# provider domains is never sent, so the renewal that runs two minutes ahead of the
+# fifteen-minute access token fails and the session ends. Nothing in `/healthz`, the
+# database checks or a short smoke test shows it, which is why it is asserted here.
+
+
+def test_a_lax_cookie_between_two_provider_domains_is_reported() -> None:
+    """Topology B — the deployment that produced the owner's report."""
+    settings = _settings(
+        BM_ENV="production",
+        BM_REFRESH_COOKIE_SAMESITE="lax",
+        BM_CORS_ALLOWED_ORIGINS="https://bmfrontend-seven.vercel.app",
+    )
+    assert settings.cross_site_refresh_cookie_origins == ["https://bmfrontend-seven.vercel.app"]
+
+
+def test_samesite_none_clears_the_report() -> None:
+    """The documented fix for topology B, and the one the deployment needs."""
+    settings = _settings(
+        BM_ENV="production",
+        BM_REFRESH_COOKIE_SAMESITE="none",
+        BM_CORS_ALLOWED_ORIGINS="https://bmfrontend-seven.vercel.app",
+    )
+    assert settings.cross_site_refresh_cookie_origins == []
+
+
+def test_one_owned_domain_on_two_subdomains_is_not_reported() -> None:
+    """Topology A. `lax` is correct here, and a warning would be crying wolf."""
+    settings = _settings(
+        BM_ENV="production",
+        BM_REFRESH_COOKIE_SAMESITE="lax",
+        BM_CORS_ALLOWED_ORIGINS="https://app.national-auto-spares.in",
+    )
+    assert settings.cross_site_refresh_cookie_origins == []
+
+
+def test_a_proxied_front_end_is_not_reported() -> None:
+    """Topology C. The browser sees one origin, so there is no allow-list to offend."""
+    settings = _settings(
+        BM_ENV="production",
+        BM_REFRESH_COOKIE_SAMESITE="lax",
+        BM_CORS_ALLOWED_ORIGINS="",
+    )
+    assert settings.cross_site_refresh_cookie_origins == []
+
+
+def test_development_is_never_reported() -> None:
+    """`local` drops `Secure`, so `none` is refused there and `lax` is the only option."""
+    settings = _settings(
+        BM_ENV="local",
+        BM_REFRESH_COOKIE_SAMESITE="lax",
+        BM_CORS_ALLOWED_ORIGINS="https://bmfrontend-seven.vercel.app",
+    )
+    assert settings.cross_site_refresh_cookie_origins == []
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://nas.vercel.app",
+        "https://nas-api.up.railway.app",
+        "https://nas.netlify.app",
+        "https://nas.pages.dev",
+        "https://nas.onrender.com",
+    ],
+)
+def test_every_known_provider_suffix_is_recognised(origin: str) -> None:
+    settings = _settings(
+        BM_ENV="production",
+        BM_REFRESH_COOKIE_SAMESITE="lax",
+        BM_CORS_ALLOWED_ORIGINS=origin,
+    )
+    assert settings.cross_site_refresh_cookie_origins == [origin]

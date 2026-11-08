@@ -254,6 +254,50 @@ every cold start lands on the sign-in form even though the user signed in yester
 Prefer two subdomains of one owned domain and leave this at `lax`: it keeps the CSRF
 property the cookie was designed around. `none` is a correct fallback, not a free one.
 
+#### ⚠️ This deployment is row three, and was set to `lax`
+
+`bmfrontend-seven.vercel.app` + `bmbackend-production.up.railway.app` is **exactly** the
+cross-site row, and the shipped template carried `lax`. On 2026-11-08 the owner reported
+it in the only terms the counter can see it:
+
+> *"IT'S LOGGING OUT AFTER EVERY 13 MIN AND THE WORK I WAS DOING WAS GONE."*
+
+**13 minutes, not 15**, because `src/api/renewal.ts` renews `RENEW_MARGIN_MS` =
+120 s ahead of the 900 s access token. The failure therefore lands on the *renewal*
+(900 − 120 = 780 s = 13 min), not on the expiry — which is why the number in the report
+did not match the TTL in the configuration and the two were never connected.
+
+`.env.production.example` now carries `none` for this topology. **The value that
+actually matters is the one in the Railway dashboard**, which this file does not set:
+changing the template fixes the next deployment, not the running one.
+
+#### It is no longer silent
+
+Two checks were added on 2026-11-08 so this cannot be invisible again:
+
+* **Startup** — `main.py` logs `startup_check` with
+  `check=refresh_cookie_never_sent_cross_site`, the offending origins and the fix.
+* **`GET /readyz`** — reports `checks.refresh_cookie`:
+
+  ```json
+  "refresh_cookie": {
+    "samesite": "lax",
+    "access_token_ttl_seconds": 900,
+    "status": "cross_site_cookie_blocked",
+    "blocked_origins": ["https://bmfrontend-seven.vercel.app"],
+    "fix": "Set BM_REFRESH_COOKIE_SAMESITE=none — see PRODUCTION-DEPLOYMENT-GUIDE §10.4"
+  }
+  ```
+
+  `status` is `ok` when the cookie can be delivered. **It never makes the service
+  unready** — a deployment with this fault still bills correctly for fifteen minutes at a
+  time, and refusing traffic would be far worse than the fault. It is reported for the
+  same reason, and with the same consequence, as the alerting check beside it.
+
+  Detection is narrow by design: it fires only for `production` + `lax` + an allow-listed
+  origin on a known provider suffix, so topologies A and C never trip it
+  (`tests/unit/test_config.py`).
+
 ---
 
 ### `BM_RELEASE`
@@ -628,7 +672,10 @@ BM_REFRESH_TOKEN_TTL_DAYS=30
 BM_CORS_ALLOWED_ORIGINS=https://<your-vercel-or-custom-domain>
 BM_ENABLE_API_DOCS=false
 BM_UNATTENDED_ACCESS=false
-BM_REFRESH_COOKIE_SAMESITE=lax
+# `none` for the *.vercel.app + *.up.railway.app pairing this deployment uses; `lax`
+# only on one owned domain or behind the Vercel proxy. See the section above — this is
+# the variable that produced the owner's 13-minute sign-out.
+BM_REFRESH_COOKIE_SAMESITE=none
 
 BM_STORAGE_BACKEND=local
 BM_STORAGE_PATH=/var/lib/bm/storage

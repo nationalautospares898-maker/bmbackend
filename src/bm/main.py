@@ -58,6 +58,25 @@ def _startup_self_checks(settings: Settings) -> None:
             logger.warning("startup_check", extra={"check": "api_docs_enabled_in_production"})
         if not settings.cors_origins:
             logger.warning("startup_check", extra={"check": "cors_allow_list_empty"})
+        # The one that signs the shop out mid-bill and shows nothing in a smoke test.
+        # Loud, named, and with the fix in the record, because the symptom (a sign-in
+        # form thirteen minutes after signing in) points nowhere near the cause.
+        if cross_site := settings.cross_site_refresh_cookie_origins:
+            logger.warning(
+                "startup_check",
+                extra={
+                    "check": "refresh_cookie_never_sent_cross_site",
+                    "origins": cross_site,
+                    "samesite": settings.refresh_cookie_samesite,
+                    "access_token_ttl_seconds": settings.access_token_ttl_seconds,
+                    "fix": (
+                        "Set BM_REFRESH_COOKIE_SAMESITE=none (the front end and API are on "
+                        "different provider domains, so a lax cookie is never sent to "
+                        "/auth/refresh and every session dies at the access-token TTL). "
+                        "See docs/PRODUCTION-DEPLOYMENT-GUIDE.md §10.4."
+                    ),
+                },
+            )
     logger.info(
         "startup",
         extra={
@@ -184,6 +203,29 @@ def _register_operational_routes(app: FastAPI) -> None:
             "state": alerting.state.value,
             "recipient_name": alerting.recipient_name,
             "destination": alerting.destination_hint,
+        }
+
+        # The refresh cookie's deliverability, reported for the same reason alerting is
+        # and with the same consequence — none, to readiness. A deployment that cannot
+        # send the cookie still bills perfectly for fifteen minutes at a time, so
+        # refusing traffic would be far worse than the fault. But it is *invisible* to
+        # every other check (`/healthz` is fine, the database is fine, the migrations
+        # match), which is exactly how it survived in production long enough for the
+        # owner to report it as "it logs me out every 13 minutes".
+        settings_now = get_settings()
+        cross_site = settings_now.cross_site_refresh_cookie_origins
+        checks["refresh_cookie"] = {
+            "samesite": settings_now.refresh_cookie_samesite,
+            "access_token_ttl_seconds": settings_now.access_token_ttl_seconds,
+            "status": "cross_site_cookie_blocked" if cross_site else "ok",
+            **(
+                {
+                    "blocked_origins": cross_site,
+                    "fix": "Set BM_REFRESH_COOKIE_SAMESITE=none — see PRODUCTION-DEPLOYMENT-GUIDE §10.4",
+                }
+                if cross_site
+                else {}
+            ),
         }
 
         return JSONResponse(
