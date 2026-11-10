@@ -18,6 +18,7 @@ Greenwich — which is every shop this application has.
 
 from __future__ import annotations
 
+import time
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -576,6 +577,12 @@ def test_each_sold_row_satisfies_before_minus_quantity_equals_after(
     _receive(api_client, headers, supplier, product["id"], "20.000")
     for quantity in ["2.000", "3.000", "1.000"]:
         _sell(api_client, headers, tenant, product["id"], quantity)
+        # `domain/shared/ids.py::uuid7` only orders two rows strictly when they land in
+        # different milliseconds; within one millisecond the tiebreak is "random but
+        # consistent", not insertion order (that module's own docstring says so). A fast
+        # test run can finish three sales inside one millisecond, so this sleep is what
+        # actually guarantees the ordering this test asserts, rather than hoping for it.
+        time.sleep(0.002)
 
     report = _report(api_client, headers, on_date=_today(api_client, headers), kind="sold")
 

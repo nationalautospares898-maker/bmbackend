@@ -260,6 +260,82 @@ def test_an_uncounted_product_is_untouched_by_finalize(
     assert _balance(api_client, headers, stocked) == Decimal("80.000")
 
 
+def test_listing_sessions_returns_what_was_started(
+    api_client: TestClient, headers: dict[str, str]
+) -> None:
+    started = api_client.post("/api/v1/inventory/stock-counts", headers=headers, json={})
+    session_id = started.json()["id"]
+
+    listed = api_client.get("/api/v1/inventory/stock-counts", headers=headers)
+    assert listed.status_code == 200, listed.text
+    ids = [s["id"] for s in listed.json()["items"]]
+    assert session_id in ids
+
+
+def test_an_unknown_session_id_is_not_found(
+    api_client: TestClient, headers: dict[str, str]
+) -> None:
+    review = api_client.get(f"/api/v1/inventory/stock-counts/{uuid.uuid4()}", headers=headers)
+    assert review.status_code == 404, review.text
+
+
+def test_recording_a_negative_quantity_is_refused(
+    api_client: TestClient, headers: dict[str, str], stocked: str
+) -> None:
+    session_id = api_client.post("/api/v1/inventory/stock-counts", headers=headers, json={}).json()[
+        "id"
+    ]
+    recorded = api_client.put(
+        f"/api/v1/inventory/stock-counts/{session_id}/items/{stocked}",
+        headers=headers,
+        json={"counted_quantity": "-1.000"},
+    )
+    assert recorded.status_code == 422, recorded.text
+
+
+def test_recording_against_an_unknown_session_is_not_found(
+    api_client: TestClient, headers: dict[str, str], stocked: str
+) -> None:
+    recorded = api_client.put(
+        f"/api/v1/inventory/stock-counts/{uuid.uuid4()}/items/{stocked}",
+        headers=headers,
+        json={"counted_quantity": "5.000"},
+    )
+    assert recorded.status_code == 404, recorded.text
+
+
+def test_recording_against_a_session_that_is_no_longer_open_is_refused(
+    api_client: TestClient, headers: dict[str, str], stocked: str
+) -> None:
+    session_id = api_client.post("/api/v1/inventory/stock-counts", headers=headers, json={}).json()[
+        "id"
+    ]
+    cancelled = api_client.post(
+        f"/api/v1/inventory/stock-counts/{session_id}:cancel", headers=headers
+    )
+    assert cancelled.status_code == 200, cancelled.text
+
+    recorded = api_client.put(
+        f"/api/v1/inventory/stock-counts/{session_id}/items/{stocked}",
+        headers=headers,
+        json={"counted_quantity": "5.000"},
+    )
+    assert recorded.status_code == 422, recorded.text
+
+
+def test_cancelling_a_session_that_is_not_open_is_refused(
+    api_client: TestClient, headers: dict[str, str], stocked: str
+) -> None:
+    session_id = api_client.post("/api/v1/inventory/stock-counts", headers=headers, json={}).json()[
+        "id"
+    ]
+    first = api_client.post(f"/api/v1/inventory/stock-counts/{session_id}:cancel", headers=headers)
+    assert first.status_code == 200, first.text
+
+    second = api_client.post(f"/api/v1/inventory/stock-counts/{session_id}:cancel", headers=headers)
+    assert second.status_code == 422, second.text
+
+
 def test_cancelling_an_open_count_applies_nothing_and_frees_the_branch(
     api_client: TestClient, headers: dict[str, str], stocked: str
 ) -> None:
