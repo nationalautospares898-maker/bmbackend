@@ -68,6 +68,21 @@ AUTHENTICATED_ONLY_ROUTES: dict[str, str] = {
     # one person who cannot be told (M26).
     "/api/v1/notifications": "the caller's own business's notices",
     "/api/v1/notifications/{notification_id}:read": "marks one of those notices read",
+    "/api/v1/notifications/{notification_id}:dismiss": "the caller's own notice, dismissed",
+    "/api/v1/notifications/{notification_id}:acknowledge": (
+        "the caller's own notice, acknowledged"
+    ),
+    "/api/v1/notifications/{notification_id}:snooze": "the caller's own notice, snoozed",
+    # Chitti orders (Feature B): the owner's own phoned-in-order scratchpad, not a
+    # report or a financial action — the counter hand who answers the phone is exactly
+    # who takes it down, the same reasoning `/api/v1/notifications` already uses.
+    "/api/v1/orders": "the caller's own business's orders",
+    "/api/v1/orders/{order_id}": "editing one of those orders while it is pending",
+    "/api/v1/orders/{order_id}/reminder": (
+        "setting or clearing the owner's own one-time reminder for one of those orders"
+    ),
+    "/api/v1/orders/{order_id}:complete": "marking one of those orders done",
+    "/api/v1/orders/{order_id}:discard": "discarding one of those orders",
 }
 
 

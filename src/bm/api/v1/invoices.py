@@ -116,9 +116,15 @@ def list_invoices(
     counter_id: uuid.UUID | None = None,
     is_credit: bool | None = None,
     idempotency_key: str | None = None,
+    status: str | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict[str, Any]:
-    """Backs Daily Bills **and** Credit Bills — one dataset, two views (FR-RPT-003)."""
+    """Backs Daily Bills **and** Credit Bills — one dataset, two views (FR-RPT-003).
+
+    `status` (Canceled Bills, 2026-11-10): omit it for the normal Daily/Credit Bills
+    behaviour, which now excludes cancelled bills by default; pass `status=cancelled`
+    for the dedicated Canceled Bills screen.
+    """
     rows = InvoiceReader(session).list_invoices(
         ctx,
         from_date=from_date,
@@ -128,6 +134,7 @@ def list_invoices(
         counter_id=counter_id,
         is_credit=is_credit,
         idempotency_key=idempotency_key,
+        status=status,
         limit=limit,
     )
     return {
@@ -146,6 +153,8 @@ def list_invoices(
                 "amount_paid": format(r.amount_paid, "f"),
                 "outstanding": format(r.outstanding, "f"),
                 "payment_status": r.payment_status,
+                "cancelled_at": r.cancelled_at.isoformat() if r.cancelled_at else None,
+                "cancellation_reason": r.cancellation_reason,
             }
             for r in rows
         ],

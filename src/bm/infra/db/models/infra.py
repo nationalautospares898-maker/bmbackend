@@ -11,7 +11,7 @@ duplicate-prevention design depends on one of two simultaneous inserts losing.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 from typing import Any
 
@@ -23,6 +23,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Time,
     UniqueConstraint,
     text,
 )
@@ -210,7 +211,88 @@ class Notification(Base):
     entity_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     entity_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: `active` / `dismissed` / `acknowledged` / `resolved` / `snoozed` (migration
+    #: `0025`). Deliberately a plain string, not a Postgres enum: unlike `kind`, adding
+    #: a new lifecycle state would be an application-logic change everywhere this is
+    #: read, so the extra rigidity of a DB enum buys nothing here.
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="active")
+    status_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = created_at_column()
+
+
+class ReminderSchedule(Base):
+    """A reminder the owner sees fire, and can create, edit, disable or remove
+    (Feature A.5, migration `0025`)."""
+
+    __tablename__ = "reminder_schedules"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("businesses.id", ondelete="RESTRICT"), nullable=False
+    )
+    #: `bill_reminder` / `stock_reminder` / `custom`.
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    label: Mapped[str] = mapped_column(NAME, nullable=False)
+    #: Business-local time of day, e.g. 08:45. Mutually exclusive with `interval_hours`.
+    fire_time: Mapped[time | None] = mapped_column(Time(), nullable=True)
+    #: 3-5, for "remind me again every N hours" reminders (owner request range).
+    interval_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(nullable=False, server_default=text("true"))
+    #: The exact moment this last fired — serves both trigger kinds (see the migration's
+    #: docstring).
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = created_at_column()
+    updated_at: Mapped[datetime] = updated_at_column()
+
+
+class Order(Base):
+    """A phoned-in order, written down now and turned into a bill later (Feature B,
+    migration `0025`).
+
+    Deliberately not an invoice or a draft bill — ADR-015's lineage treats a correction
+    as cancellation, return, credit note or reversal, and an order is simply not a sale
+    yet. Converting one to a bill is a *read* of this row by the Billing screen, which
+    creates the invoice through the ordinary finalisation path; nothing here ever
+    becomes a stock movement or a financial record by itself.
+    """
+
+    __tablename__ = "orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("businesses.id", ondelete="RESTRICT"), nullable=False
+    )
+    branch_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    customer_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: The free-form note — items, quantities, anything written down. Deliberately
+    #: unstructured (owner request: no mandatory fields before saving).
+    body: Mapped[str] = mapped_column(String(4000), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
+    created_at: Mapped[datetime] = created_at_column()
+    updated_at: Mapped[datetime] = updated_at_column()
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    discarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Last time the ten-minute nudge fired for this order; null until the first one.
+    last_reminder_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: A one-time, owner-chosen reminder for *this* order (migration `0026`), ahead of
+    #: and independent of the ten-minute cadence above. Cleared back to `None` by
+    #: `orders.nudge` once it fires, so it cannot keep firing every ten minutes after
+    #: the moment the owner actually asked for.
+    remind_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 # --- imports -----------------------------------------------------------------
@@ -371,6 +453,22 @@ Index(
     Notification.business_id,
     Notification.created_at.desc(),
     postgresql_where=text("read_at IS NULL"),
+)
+#: Migration `0025`. One open alert per condition — see the migration's docstring.
+Index(
+    "uq_notifications__active_per_entity",
+    Notification.business_id,
+    Notification.kind,
+    Notification.entity_id,
+    unique=True,
+    postgresql_where=text("status = 'active' AND entity_id IS NOT NULL"),
+)
+Index("ix_reminder_schedules__business", ReminderSchedule.business_id)
+Index(
+    "ix_orders__pending",
+    Order.business_id,
+    Order.created_at.desc(),
+    postgresql_where=text("status = 'pending'"),
 )
 #: The `0017` child-table tenancy index. See the note in `catalog.py`.
 Index("ix_import_rows__business", ImportRow.business_id, ImportRow.import_job_id)

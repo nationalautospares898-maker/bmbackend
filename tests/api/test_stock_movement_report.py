@@ -169,9 +169,17 @@ def _today(api_client: TestClient, headers: dict[str, str]) -> str:
 
 
 def _report(
-    api_client: TestClient, headers: dict[str, str], *, on_date: str, kind: str
+    api_client: TestClient,
+    headers: dict[str, str],
+    *,
+    on_date: str,
+    kind: str,
+    end_date: str | None = None,
 ) -> dict[str, Any]:
-    response = api_client.get(REPORT, headers=headers, params={"on_date": on_date, "kind": kind})
+    params: dict[str, str] = {"on_date": on_date, "kind": kind}
+    if end_date is not None:
+        params["end_date"] = end_date
+    response = api_client.get(REPORT, headers=headers, params=params)
     assert response.status_code == 200, response.text
     return dict(response.json())
 
@@ -738,3 +746,177 @@ def test_a_missing_date_is_rejected_rather_than_guessed(
     api_client: TestClient, headers: dict[str, str]
 ) -> None:
     assert api_client.get(REPORT, headers=headers, params={"kind": "added"}).status_code == 422
+
+
+# --- the date range (the owner's Stock Report, start date + end date) ---------
+#
+# `end_date` is additive: every test above omits it and must keep passing unchanged,
+# which is what proves a single-day report is just the range where both ends coincide
+# rather than a second code path that could disagree with this one.
+
+
+def test_end_date_defaults_to_on_date_so_every_existing_caller_is_unaffected(
+    api_client: TestClient,
+    headers: dict[str, str],
+    product: dict[str, Any],
+    supplier: str,
+) -> None:
+    _receive(api_client, headers, supplier, product["id"], "10.000")
+    today = _today(api_client, headers)
+
+    without = _report(api_client, headers, on_date=today, kind="added")
+    with_same = _report(api_client, headers, on_date=today, kind="added", end_date=today)
+
+    assert without["items"] == with_same["items"]
+    assert with_same["on_date"] == with_same["end_date"] == today
+
+
+def test_a_range_spanning_two_days_sees_both_days_movements(
+    api_client: TestClient,
+    headers: dict[str, str],
+    migration_session: Session,
+    product: dict[str, Any],
+    supplier: str,
+) -> None:
+    """Two receipts, backdated a day apart, both appear once the range covers both days —
+    and neither appears when the range is narrowed back to a single one of them."""
+    _receive(api_client, headers, supplier, product["id"], "4.000", document="DAY-1")
+    day_one_id = migration_session.execute(
+        text("SELECT id FROM stock_movements WHERE product_id = :p ORDER BY created_at LIMIT 1"),
+        {"p": product["id"]},
+    ).scalar_one()
+    migration_session.execute(
+        text("UPDATE stock_movements SET created_at = :t WHERE id = :id"),
+        {"t": "2026-02-01 06:00:00+00", "id": day_one_id},
+    )
+    migration_session.commit()
+
+    _receive(api_client, headers, supplier, product["id"], "6.000", document="DAY-2")
+    day_two_id = migration_session.execute(
+        text("SELECT id FROM stock_movements WHERE product_id = :p AND id != :excl"),
+        {"p": product["id"], "excl": day_one_id},
+    ).scalar_one()
+    migration_session.execute(
+        text("UPDATE stock_movements SET created_at = :t WHERE id = :id"),
+        {"t": "2026-02-02 06:00:00+00", "id": day_two_id},
+    )
+    migration_session.commit()
+
+    ranged = _report(api_client, headers, on_date="2026-02-01", end_date="2026-02-02", kind="added")
+    assert ranged["movements"] == 2
+    assert Decimal(ranged["total_quantity"]) == Decimal("10.000")
+    assert [line["reference"] for line in ranged["items"]] == ["DAY-1", "DAY-2"]
+
+    narrowed = _report(api_client, headers, on_date="2026-02-01", kind="added")
+    assert narrowed["movements"] == 1
+    assert narrowed["items"][0]["reference"] == "DAY-1"
+
+
+def test_an_end_date_before_the_start_date_is_rejected(
+    api_client: TestClient, headers: dict[str, str]
+) -> None:
+    response = api_client.get(
+        REPORT,
+        headers=headers,
+        params={"on_date": "2026-05-10", "end_date": "2026-05-01", "kind": "added"},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_an_empty_range_reports_nothing_rather_than_failing(
+    api_client: TestClient, headers: dict[str, str]
+) -> None:
+    report = _report(api_client, headers, on_date="2019-01-01", end_date="2019-01-31", kind="added")
+    assert report["items"] == []
+    assert report["movements"] == 0
+
+
+# --- `kind=adjusted` (a bucket this report did not have before) ---------------
+#
+# Before this, a decrease that was not a sale — scrap, a correction downwards, a transfer
+# out, a supplier return — appeared in neither `added` nor `sold`: the report silently
+# under-counted what left the shelf. `adjusted` closes that gap without touching what
+# `added`/`sold` already mean, which is why every test above it is untouched.
+
+
+def test_a_downward_correction_appears_only_under_adjusted(
+    api_client: TestClient,
+    headers: dict[str, str],
+    product: dict[str, Any],
+    supplier: str,
+) -> None:
+    _receive(api_client, headers, supplier, product["id"], "10.000")
+    adjust = api_client.post(
+        "/api/v1/inventory/adjustments",
+        headers={**headers, **_key()},
+        json={
+            "product_id": product["id"],
+            "quantity_delta": "-4.000",
+            "reason_code": "adjustment_decrease",
+            "reason_text": "Two were damaged in the stockroom",
+        },
+    )
+    assert adjust.status_code in {200, 201}, adjust.text
+    today = _today(api_client, headers)
+
+    adjusted = _report(api_client, headers, on_date=today, kind="adjusted")
+    assert adjusted["movements"] == 1
+    assert Decimal(adjusted["total_quantity"]) == Decimal("4.000")
+    assert adjusted["items"][0]["reason"] == "adjustment_decrease"
+    # `invoices` means nothing here — it is a `sold`-report figure.
+    assert adjusted["invoices"] == 0
+
+    added = _report(api_client, headers, on_date=today, kind="added")
+    sold = _report(api_client, headers, on_date=today, kind="sold")
+    assert all(line["reason"] != "adjustment_decrease" for line in added["items"])
+    assert sold["items"] == []
+
+
+def test_a_sale_never_appears_under_adjusted(
+    api_client: TestClient,
+    headers: dict[str, str],
+    tenant: Tenant,
+    product: dict[str, Any],
+    supplier: str,
+) -> None:
+    """`sold` keeps its exclusive claim on `reason = 'sale'` — `adjusted` must not
+    duplicate it even though a sale is also a decrease."""
+    _receive(api_client, headers, supplier, product["id"], "10.000")
+    _sell(api_client, headers, tenant, product["id"], "3.000")
+
+    adjusted = _report(api_client, headers, on_date=_today(api_client, headers), kind="adjusted")
+    assert adjusted["items"] == []
+    assert adjusted["movements"] == 0
+
+
+def test_a_stock_count_correction_carries_its_source_type(
+    api_client: TestClient,
+    headers: dict[str, str],
+    product: dict[str, Any],
+    supplier: str,
+) -> None:
+    """A stock-count correction and a manual one both write `adjustment_decrease`;
+    `source_type` is what lets the screen still tell them apart (owner request)."""
+    _receive(api_client, headers, supplier, product["id"], "10.000")
+    today = _today(api_client, headers)
+
+    started = api_client.post(
+        "/api/v1/inventory/stock-counts", headers={**headers, **_key()}, json={}
+    )
+    assert started.status_code in {200, 201}, started.text
+    session_id = started.json()["id"]
+    recorded = api_client.put(
+        f"/api/v1/inventory/stock-counts/{session_id}/items/{product['id']}",
+        headers={**headers, **_key()},
+        json={"counted_quantity": "7.000"},
+    )
+    assert recorded.status_code in {200, 201}, recorded.text
+    finalized = api_client.post(
+        f"/api/v1/inventory/stock-counts/{session_id}:finalize",
+        headers={**headers, **_key()},
+    )
+    assert finalized.status_code == 200, finalized.text
+
+    adjusted = _report(api_client, headers, on_date=today, kind="adjusted")
+    assert adjusted["movements"] == 1
+    assert adjusted["items"][0]["source_type"] == "stock_count"

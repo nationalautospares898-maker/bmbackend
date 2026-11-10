@@ -50,6 +50,8 @@ class ErrorCode(StrEnum):
     PRODUCT_INACTIVE = "PRODUCT_INACTIVE"
     TOTAL_MISMATCH = "TOTAL_MISMATCH"
     EMPTY_SALE = "EMPTY_SALE"
+    #: Feature A.6, 2026-11-10: one open physical stock count per branch at a time.
+    STOCK_COUNT_ALREADY_OPEN = "STOCK_COUNT_ALREADY_OPEN"
 
     # --- credit --------------------------------------------------------------
     CREDIT_CUSTOMER_REQUIRED = "CREDIT_CUSTOMER_REQUIRED"

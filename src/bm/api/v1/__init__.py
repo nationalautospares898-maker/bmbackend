@@ -35,4 +35,6 @@ _ROUTER_MODULES: tuple[str, ...] = (
     "purchases",  # M15 + M24 — suppliers, purchases, returns
     "imports",  # M23 — upload, parse, review, apply
     "notifications",  # M26 — in-app notices and the alerting status
+    "reminders",  # Feature A.5 — scheduled reminders the owner can see and change
+    "orders",  # Feature B — Chitti orders
 )

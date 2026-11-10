@@ -365,6 +365,38 @@ def test_an_unknown_invoice_cannot_be_allocated_to(
         service._locked_outstanding(ctx, uuid.uuid4())
 
 
+def test_a_cancelled_credit_bill_is_hidden_from_the_default_list_and_visible_filtered(
+    api_client: TestClient,
+    headers: dict[str, str],
+    tenant: Tenant,
+    stocked: str,
+) -> None:
+    """Canceled Bills (2026-11-10): a cancelled bill is not an active outstanding debt
+    and must not appear in the ordinary Credit Bills list, only in the dedicated
+    Canceled Bills view (`status=cancelled`), carrying its cancellation audit fields."""
+    customer_id = str(uuid.uuid4())
+    invoice = _credit_sale(api_client, headers, tenant, stocked, customer_id=customer_id)
+    cancelled = api_client.post(
+        f"/api/v1/invoices/{invoice['id']}:cancel",
+        headers={**headers, **_key()},
+        json={"reason": "owner test: entered against the wrong customer"},
+    )
+    assert cancelled.status_code in (200, 201), cancelled.text
+
+    default_list = api_client.get("/api/v1/invoices", headers=headers, params={"is_credit": True})
+    assert default_list.status_code == 200, default_list.text
+    assert invoice["id"] not in [row["id"] for row in default_list.json()["items"]]
+
+    cancelled_list = api_client.get(
+        "/api/v1/invoices", headers=headers, params={"status": "cancelled"}
+    )
+    assert cancelled_list.status_code == 200, cancelled_list.text
+    rows = {row["id"]: row for row in cancelled_list.json()["items"]}
+    assert invoice["id"] in rows
+    assert rows[invoice["id"]]["cancelled_at"] is not None
+    assert "wrong customer" in rows[invoice["id"]]["cancellation_reason"]
+
+
 # --- payment_status is derived, never set -------------------------------------
 
 

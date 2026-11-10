@@ -52,7 +52,9 @@ from bm.infra.db.models.infra import (
     ImportRow,
     Job,
     Notification,
+    Order,
     OutboxEvent,
+    ReminderSchedule,
     SyncOperation,
 )
 from bm.infra.db.models.inventory import (
@@ -104,6 +106,7 @@ __all__ = [
     "Mechanic",
     "Membership",
     "Notification",
+    "Order",
     "OutboxEvent",
     "Payment",
     "PaymentAllocation",
@@ -116,6 +119,7 @@ __all__ = [
     "PurchaseItem",
     "ReconciliationRun",
     "RefreshToken",
+    "ReminderSchedule",
     "Role",
     "RolePermission",
     "SalesReturn",

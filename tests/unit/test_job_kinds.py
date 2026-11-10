@@ -34,16 +34,22 @@ def test_no_handler_is_registered_under_a_string_that_is_not_a_job_kind() -> Non
 
 
 def test_the_registry_covers_the_documented_set_exactly() -> None:
-    """`ARCHITECTURE.md §7` lists seven jobs. Five are implemented; the other two are
-    deliberately absent and the reason is recorded next to the enum:
+    """`ARCHITECTURE.md §7` lists seven jobs. Five were implemented at that milestone;
+    the other two are deliberately absent and the reason is recorded next to the enum:
 
     * `import.apply` is a synchronous endpoint, because FR-IMP-008 requires one
       transaction and the API contract requires an `Idempotency-Key` — both describe a
       request the caller waits on.
     * `credit.ageing_snapshot` needs a snapshot table `DATA-MODEL.md` never specifies.
 
-    This test pins that decision so the absence stays deliberate rather than becoming
-    something nobody remembers.
+    Three more were added for Feature A (reminders) and Feature B (orders), 2026-11-10
+    — `low_stock.scan`, `reminders.check_schedules`, `orders.nudge` — each enqueued by
+    `worker.py`'s own in-process ticker rather than an external cron, since nothing in
+    this codebase enqueues the original five periodically either (see `worker.py`'s
+    `_SCHEDULE_INTERVALS_SECONDS` docstring).
+
+    This test pins the decision so an absence or an addition stays deliberate rather
+    than becoming something nobody remembers.
     """
     assert {kind.value for kind in JobKind} == {
         "import.parse",
@@ -51,6 +57,9 @@ def test_the_registry_covers_the_documented_set_exactly() -> None:
         "idempotency.prune",
         "drafts.mark_stale",
         "notifications.dispatch",
+        "low_stock.scan",
+        "reminders.check_schedules",
+        "orders.nudge",
     }
 
 

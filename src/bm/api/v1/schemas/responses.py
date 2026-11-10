@@ -310,6 +310,8 @@ class InvoiceSummaryOut(Out):
     amount_paid: MoneyStr
     outstanding: MoneyStr
     payment_status: str
+    cancelled_at: datetime | None = None
+    cancellation_reason: str | None = None
 
 
 class InvoiceListOut(Out):
@@ -729,6 +731,9 @@ class MovementReportLineOut(Out):
     stock_before: QuantityStr
     stock_after: QuantityStr
     reason: str
+    #: `stock_count`, `invoice`, `purchase`, `stock_sheet`, `manual`, … — distinguishes a
+    #: stock-count correction from a manual one even though both carry the same `reason`.
+    source_type: str | None = None
     #: Invoice number or supplier document number; `null` when the movement has no
     #: document, which the screen shows as nothing rather than as a placeholder.
     reference: str | None = None
@@ -741,13 +746,15 @@ class MovementReportLineOut(Out):
 
 class MovementReportOut(Out):
     on_date: date
+    #: Equal to `on_date` for a single-day report; the last day of the range otherwise.
+    end_date: date
     kind: str
     items: list[MovementReportLineOut]
     #: Distinct products, not rows.
     products: int
     total_quantity: QuantityStr
     movements: int
-    #: Distinct bills behind the deductions; `0` on the `added` report.
+    #: Distinct bills behind the deductions; `0` on the `added`/`adjusted` report.
     invoices: int
     #: `true` when the day held more movements than were returned.
     truncated: bool
@@ -964,6 +971,118 @@ class AlertingStatusOut(Out):
     #: Scheme and host only. For most webhook providers the path is the credential.
     destination_hint: str | None = None
     min_severity: str
+
+
+# --- physical stock count (Feature A.6) -----------------------------------------
+
+
+class StockCountSessionOut(Out):
+    id: uuid.UUID
+    status: str
+    notes: str | None
+    created_at: str
+    applied_at: str | None
+
+
+class StockCountSessionListOut(Out):
+    items: list[StockCountSessionOut]
+
+
+class StockCountItemOut(Out):
+    product_id: uuid.UUID
+    name: str
+    sku: str | None
+    system_quantity: QuantityStr
+    counted_quantity: QuantityStr | None
+    #: `null` until counted — never a computed zero, which would read as "no
+    #: discrepancy" rather than "not yet counted" (mirrors the reorder-level rule).
+    discrepancy: QuantityStr | None
+
+
+class StockCountReviewOut(Out):
+    session: StockCountSessionOut
+    items: list[StockCountItemOut]
+
+
+class StockCountFinalizeOut(Out):
+    movements: int
+    counted: int
+
+
+# --- notifications (Feature A.1/A.2) -------------------------------------------
+
+
+class NotificationOut(Out):
+    id: uuid.UUID
+    kind: str
+    severity: str
+    title: str
+    body: str | None
+    created_at: str
+    status: str
+    entity_type: str | None
+    entity_id: uuid.UUID | None
+    read_at: str | None
+
+
+class NotificationListOut(Out):
+    notifications: list[NotificationOut]
+
+
+class LifecycleStatusOut(Out):
+    """The body every dismiss/acknowledge/snooze/read action returns."""
+
+    status: str | None = None
+    read: bool | None = None
+    snoozed_until: str | None = None
+
+
+# --- scheduled reminders (Feature A.5) ------------------------------------------
+
+
+class ReminderOut(Out):
+    id: uuid.UUID
+    kind: str
+    label: str
+    #: `HH:MM:SS`, business-local. Mutually exclusive with `interval_hours`.
+    fire_time: str | None
+    interval_hours: int | None
+    enabled: bool
+    last_fired_at: str | None
+
+
+class ReminderListOut(Out):
+    items: list[ReminderOut]
+
+
+class CreatedIdOut(Out):
+    id: uuid.UUID
+
+
+class UpdatedOut(Out):
+    updated: bool
+
+
+# --- Chitti orders (Feature B) --------------------------------------------------
+
+
+class OrderOut(Out):
+    id: uuid.UUID
+    customer_name: str | None
+    phone: str | None
+    body: str
+    status: str
+    created_at: str
+    updated_at: str
+    completed_at: str | None
+    discarded_at: str | None
+    #: The owner's one-time reminder for this order (migration `0026`), `null` when
+    #: none is set. Drives the Orders screen's own priority sort.
+    remind_at: str | None = None
+
+
+class OrderListOut(Out):
+    items: list[OrderOut]
 
 
 # --- errors -------------------------------------------------------------------

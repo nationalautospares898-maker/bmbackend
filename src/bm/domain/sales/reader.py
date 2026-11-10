@@ -115,6 +115,9 @@ class InvoiceSummary:
     amount_paid: Decimal
     outstanding: Decimal
     payment_status: str
+    #: Populated only for cancelled bills; `None` otherwise (Canceled Bills, 2026-11-10).
+    cancelled_at: datetime | None
+    cancellation_reason: str | None
 
 
 class InvoiceReader:
@@ -255,15 +258,25 @@ class InvoiceReader:
         counter_id: uuid.UUID | None = None,
         is_credit: bool | None = None,
         idempotency_key: str | None = None,
+        status: str | None = None,
         limit: int = 50,
     ) -> list[InvoiceSummary]:
-        """Backs Daily Bills **and** Credit Bills — one dataset, two views (FR-RPT-003)."""
+        """Backs Daily Bills **and** Credit Bills — one dataset, two views (FR-RPT-003).
+
+        `status` (2026-11-10, Canceled Bills): `None` is the default used by Daily Bills
+        and Credit Bills and **excludes cancelled bills** — a cancelled sale is not an
+        active cash sale or an active outstanding debt, and must not inflate either
+        screen's totals or lists. Passing `status="cancelled"` is the one way to see them,
+        and backs the separate Canceled Bills screen. Nothing else changes: cancellation
+        itself, its audit fields, and the invoice row are untouched by this filter.
+        """
         ctx.require(Permission.REPORTS_SALES_READ)
 
         sql = """
             SELECT i.id, i.invoice_number, i.issued_at, i.status, i.is_credit, i.due_date,
                    i.customer_id, i.customer_name_snapshot, i.total, i.amount_paid,
                    i.total - i.amount_paid AS outstanding, i.payment_status,
+                   i.cancelled_at, i.cancellation_reason,
                    c.code AS counter_code
               FROM invoices i
               JOIN counters c ON c.id = i.counter_id
@@ -279,6 +292,12 @@ class InvoiceReader:
         effective_counter = counter_id
         if not ctx.has(Permission.REPORTS_FINANCIAL_READ) and ctx.counter_id is not None:
             effective_counter = ctx.counter_id
+
+        if status is not None:
+            sql += " AND i.status = CAST(:status AS invoice_status)"
+            params["status"] = status
+        else:
+            sql += " AND i.status != 'cancelled'"
 
         if from_date is not None:
             sql += " AND (i.issued_at AT TIME ZONE :timezone)::date >= :from_date"
@@ -321,6 +340,8 @@ class InvoiceReader:
                 amount_paid=r.amount_paid,
                 outstanding=r.outstanding,
                 payment_status=r.payment_status,
+                cancelled_at=r.cancelled_at,
+                cancellation_reason=r.cancellation_reason,
             )
             for r in self._session.execute(text(sql), params).all()
         ]

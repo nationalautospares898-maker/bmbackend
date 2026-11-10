@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import insert, text, update
 from sqlalchemy.orm import Session
@@ -49,6 +50,10 @@ class NotificationView:
     title: str
     body: str | None
     created_at: str
+    status: str
+    entity_type: str | None
+    entity_id: uuid.UUID | None
+    read_at: str | None
 
 
 def notify(
@@ -62,7 +67,12 @@ def notify(
     entity_type: str | None = None,
     entity_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
-    """Record an in-app notification. Part of the caller's transaction."""
+    """Record an in-app notification. Part of the caller's transaction.
+
+    Always inserts — use `notify_once` where the condition can recur unchanged (a
+    low-stock item still low, a bill still outstanding) and a second notification for
+    the same still-open one would just be noise.
+    """
     notification_id = uuid.uuid4()
     session.execute(
         insert(Notification).values(
@@ -77,6 +87,76 @@ def notify(
         )
     )
     return notification_id
+
+
+def notify_once(
+    session: Session,
+    *,
+    business_id: uuid.UUID,
+    kind: NotificationKind,
+    severity: NotificationSeverity,
+    title: str,
+    body: str | None,
+    entity_type: str,
+    entity_id: uuid.UUID,
+) -> uuid.UUID | None:
+    """Raise an alert for one ongoing condition, without duplicating an open one.
+
+    Relies on migration `0025`'s partial unique index — `(business_id, kind, entity_id)
+    WHERE status = 'active'` — so "is there already an open alert for this exact thing"
+    is a database guarantee, not a check-then-insert race the caller has to get right.
+    Returns the new id, or `None` when one was already open (a no-op, not an error).
+
+    Once dismissed/acknowledged/resolved, the slot is free: a *recurrence* of the same
+    condition (stock dips low again after being restocked) raises a fresh notification,
+    which is the intended behaviour, not a bug in the dedup.
+    """
+    notification_id = uuid.uuid4()
+    result = session.execute(
+        text(
+            """
+            INSERT INTO notifications
+                (id, business_id, kind, severity, title, body, entity_type, entity_id)
+            VALUES (:id, :business_id, :kind, :severity, :title, :body, :entity_type, :entity_id)
+            ON CONFLICT (business_id, kind, entity_id)
+            WHERE status = 'active' AND entity_id IS NOT NULL
+            DO NOTHING
+            """
+        ),
+        {
+            "id": notification_id,
+            "business_id": business_id,
+            "kind": kind.value,
+            "severity": severity.value,
+            "title": title[:200],
+            "body": body,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+        },
+    )
+    return notification_id if rows_affected(result) else None
+
+
+def resolve_for_entity(
+    session: Session, *, business_id: uuid.UUID, kind: NotificationKind, entity_id: uuid.UUID
+) -> None:
+    """Close the open alert for one condition because the condition itself was fixed.
+
+    Called only by the application code that actually performed the fix — receiving
+    stock past the reorder level, marking an order completed — never by a user action
+    on the bell. That is the distinction the lifecycle exists to keep: a dismiss must
+    never look like a resolve.
+    """
+    session.execute(
+        update(Notification)
+        .where(
+            Notification.business_id == business_id,
+            Notification.kind == kind.value,
+            Notification.entity_id == entity_id,
+            Notification.status == "active",
+        )
+        .values(status="resolved", status_changed_at=text("now()"))
+    )
 
 
 def raise_alert(
@@ -112,18 +192,26 @@ def raise_alert(
     return event_id
 
 
-def unread_for(ctx: AuthContext, session: Session, *, limit: int = 50) -> list[NotificationView]:
-    """The owner's unread notifications. No permission beyond being signed in: these are
-    notices about the caller's own business, and gating them behind a reports permission
-    would mean a counter hand cannot be told stock ran out."""
+def active_for(ctx: AuthContext, session: Session, *, limit: int = 50) -> list[NotificationView]:
+    """The notifications the bell shows: `active`, plus any `snoozed` one whose snooze
+    has expired (it reappears on its own — a snooze that silently lapsed forever would
+    be a dismiss wearing a different name).
+
+    No permission beyond being signed in: these are notices about the caller's own
+    business, and gating "stock has run out" behind a reports permission would mean the
+    person at the counter is the one person who cannot be told.
+    """
     rows = session.execute(
         text(
             """
-            SELECT id, kind, severity, title, body, created_at
+            SELECT id, kind, severity, title, body, created_at, status, entity_type,
+                   entity_id, read_at
               FROM notifications
              WHERE business_id = :business_id
-               AND read_at IS NULL
-             ORDER BY created_at DESC
+               AND (status = 'active' OR (status = 'snoozed' AND snoozed_until <= now()))
+             ORDER BY
+               CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+               created_at DESC
              LIMIT :limit
             """
         ),
@@ -137,9 +225,18 @@ def unread_for(ctx: AuthContext, session: Session, *, limit: int = 50) -> list[N
             title=r.title,
             body=r.body,
             created_at=r.created_at.isoformat(),
+            status=str(r.status),
+            entity_type=r.entity_type,
+            entity_id=r.entity_id,
+            read_at=r.read_at.isoformat() if r.read_at else None,
         )
         for r in rows
     ]
+
+
+#: Backward-compatible alias — `GET /notifications` originally read unread notices
+#: only; it now reads the active set, which `read_at` is independent of.
+unread_for = active_for
 
 
 def mark_read(ctx: AuthContext, session: Session, notification_id: uuid.UUID) -> bool:
@@ -155,6 +252,64 @@ def mark_read(ctx: AuthContext, session: Session, notification_id: uuid.UUID) ->
                 .values(read_at=text("now()"))
             )
         )
+    )
+
+
+def _transition(
+    ctx: AuthContext,
+    session: Session,
+    notification_id: uuid.UUID,
+    *,
+    to_status: str,
+    extra: dict[str, object] | None = None,
+) -> bool:
+    """Shared machinery for the three user-facing lifecycle actions below.
+
+    Only ever moves a notification **out of** `active`/`snoozed` — never resolves one,
+    which only `resolve_for_entity` may do. That restriction is what keeps a dismiss
+    from ever reading as "the underlying problem went away".
+    """
+    values: dict[str, object] = {"status": to_status, "status_changed_at": text("now()")}
+    if extra:
+        values.update(extra)
+    return bool(
+        rows_affected(
+            session.execute(
+                update(Notification)
+                .where(
+                    Notification.id == notification_id,
+                    Notification.business_id == ctx.business_id,
+                    Notification.status.in_(("active", "snoozed")),
+                )
+                .values(**values)
+            )
+        )
+    )
+
+
+def dismiss(ctx: AuthContext, session: Session, notification_id: uuid.UUID) -> bool:
+    """ "Check later" — stop showing it, change nothing it refers to.
+
+    Dismissing a low-stock alert must never increase stock; dismissing a bill reminder
+    must never touch the bill. Nothing here does either — it only ever flips `status`.
+    """
+    return _transition(ctx, session, notification_id, to_status="dismissed")
+
+
+def acknowledge(ctx: AuthContext, session: Session, notification_id: uuid.UUID) -> bool:
+    """ "I've seen this and I'm on it" — for notifications with no server-verifiable
+    resolution of their own (a custom reminder, an informational notice). Distinct from
+    `dismiss` only in the word a screen reader and an audit log would use for it; the
+    effect on the underlying record is identical: none."""
+    return _transition(ctx, session, notification_id, to_status="acknowledged")
+
+
+def snooze(
+    ctx: AuthContext, session: Session, notification_id: uuid.UUID, *, until: datetime
+) -> bool:
+    """Remind me again later, rather than never."""
+    return _transition(
+        ctx, session, notification_id, to_status="snoozed", extra={"snoozed_until": until}
     )
 
 

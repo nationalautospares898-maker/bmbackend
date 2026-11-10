@@ -348,6 +348,10 @@ class JobKind(StrEnum):
     IDEMPOTENCY_PRUNE = "idempotency.prune"
     DRAFTS_MARK_STALE = "drafts.mark_stale"
     NOTIFICATIONS_DISPATCH = "notifications.dispatch"
+    #: Added for Feature A (reminders) and Feature B (orders), 2026-11-10.
+    LOW_STOCK_SCAN = "low_stock.scan"
+    REMINDERS_CHECK_SCHEDULES = "reminders.check_schedules"
+    ORDERS_NUDGE = "orders.nudge"
     # `ARCHITECTURE.md §7` also lists `import.apply` and `credit.ageing_snapshot`.
     # Neither is a member here, for different reasons:
     #
@@ -368,6 +372,29 @@ class NotificationKind(StrEnum):
     OVERDUE_CREDIT = "overdue_credit"
     RECONCILIATION_ALERT = "reconciliation_alert"
     IMPORT_COMPLETE = "import_complete"
+    #: Added by migration `0025` for Feature A (reminders) and Feature B (orders).
+    BILL_REMINDER = "bill_reminder"
+    STOCK_REMINDER = "stock_reminder"
+    ORDER_REMINDER = "order_reminder"
+    CUSTOM_REMINDER = "custom_reminder"
+
+
+class NotificationStatus(StrEnum):
+    """The lifecycle a notification moves through (migration `0025`).
+
+    Dismissal and resolution are kept deliberately distinct: dismissing a low-stock
+    notice must never read as "the stock was restocked", and acknowledging a bill
+    reminder must never read as "the bill was paid". Only the application code that
+    actually performs the underlying action (receiving stock, recording a payment) may
+    move a notification to `resolved`; every dismiss/acknowledge action a user takes
+    from the bell only ever reaches `dismissed`/`acknowledged`/`snoozed`.
+    """
+
+    ACTIVE = "active"
+    DISMISSED = "dismissed"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+    SNOOZED = "snoozed"
 
 
 NOTIFICATION_KIND = pg_enum("notification_kind", *(e.value for e in NotificationKind))

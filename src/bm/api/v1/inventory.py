@@ -23,12 +23,18 @@ from bm.api.v1.schemas.responses import (
     AdjustmentOut,
     MovementReportOut,
     StockBalancesOut,
+    StockCountFinalizeOut,
+    StockCountReviewOut,
+    StockCountSessionListOut,
+    StockCountSessionOut,
     StockEntriesOut,
     StockEntryMatchOut,
     StockMovementsOut,
 )
 from bm.domain.auth.permissions import Permission
 from bm.domain.inventory.service import InventoryService
+from bm.domain.inventory.stock_count import StockCountService
+from bm.domain.shared.money import parse_decimal
 from bm.domain.stockentry.service import StockEntryInput, StockEntryService
 from bm.domain.sync.idempotency import IdempotencyService
 
@@ -139,32 +145,43 @@ def list_movements(
 def movement_report(
     session: ReadSession,
     ctx: Annotated[CurrentContext, Depends(require(Permission.CATALOG_READ))],
-    on_date: Annotated[date, Query(description="Business-local date, YYYY-MM-DD")],
-    kind: Annotated[str, Query(pattern="^(added|sold)$")] = "added",
+    on_date: Annotated[date, Query(description="Business-local start date, YYYY-MM-DD")],
+    kind: Annotated[str, Query(pattern="^(added|sold|adjusted)$")] = "added",
+    end_date: Annotated[
+        date | None,
+        Query(description="Business-local end date, inclusive. Defaults to on_date."),
+    ] = None,
 ) -> dict[str, Any]:
-    """What moved in or out of stock on one day.
+    """What moved in or out of stock over a business-local date range (the Stock Report).
 
     The per-product History answers "what happened to this part"; this answers "what
-    happened today", from the same append-only ledger — so the two can never disagree and
-    nothing is recomputed from the current total.
+    happened in this period", from the same append-only ledger — so the two can never
+    disagree and nothing is recomputed from the current total. `end_date` defaults to
+    `on_date`, so a single day's report (the original shape of this endpoint) is just the
+    range where both ends are the same day.
 
     `kind=added` is every movement that **increased** stock: the opening figure, a
     purchase receipt, the owner's stock sheet, a correction upwards, a customer return, an
     applied import, and the reversal of a cancelled bill. `kind=sold` is `reason = 'sale'`
-    alone — what customers took away.
+    alone — what customers took away. `kind=adjusted` is every other decrease — a
+    correction downwards, scrap, a transfer out, a supplier return — the movements that
+    belonged to neither bucket before this existed.
 
     Three exclusions are structural rather than filtered, which is what makes them
     reliable: a **draft** writes no movement, a **reprint** writes no movement, and a
     **credit payment** moves money rather than goods. None of them can appear here
     whatever this endpoint does.
 
-    `stock_before` and `stock_after` are the ledger's own figures. The day is the
+    `stock_before` and `stock_after` are the ledger's own figures. The day boundary is the
     business-local one (`(created_at AT TIME ZONE …)::date`), the same boundary Daily
     Bills uses, so the two screens agree on what "today" means.
     """
-    report = InventoryService(session).movement_report(ctx, on_date=on_date, kind=kind)
+    report = InventoryService(session).movement_report(
+        ctx, on_date=on_date, kind=kind, end_date=end_date
+    )
     return {
         "on_date": report.on_date.isoformat(),
+        "end_date": report.end_date.isoformat(),
         "kind": report.kind,
         "items": [
             {
@@ -176,6 +193,7 @@ def movement_report(
                 "stock_before": format(line.stock_before, "f"),
                 "stock_after": format(line.stock_after, "f"),
                 "reason": line.reason,
+                "source_type": line.source_type,
                 "reference": line.reference,
                 "is_credit": line.is_credit,
                 "invoice_cancelled": line.invoice_cancelled,
@@ -356,6 +374,117 @@ def run_reconciliation(
         },
     )
     return {**report, "as_of": _now()}
+
+
+def _session_out(s: Any) -> dict[str, Any]:
+    return {
+        "id": str(s.id),
+        "status": s.status,
+        "notes": s.notes,
+        "created_at": s.created_at,
+        "applied_at": s.applied_at,
+    }
+
+
+def _item_out(i: Any) -> dict[str, Any]:
+    return {
+        "product_id": str(i.product_id),
+        "name": i.name,
+        "sku": i.sku,
+        "system_quantity": format(i.system_quantity, "f"),
+        "counted_quantity": format(i.counted_quantity, "f")
+        if i.counted_quantity is not None
+        else None,
+        "discrepancy": format(i.discrepancy, "f") if i.discrepancy is not None else None,
+    }
+
+
+@router.get("/stock-counts", responses={200: {"model": StockCountSessionListOut}})
+def list_stock_counts(
+    session: ReadSession,
+    ctx: Annotated[CurrentContext, Depends(require(Permission.INVENTORY_ADJUST))],
+) -> dict[str, Any]:
+    items = StockCountService(session).list_sessions(ctx)
+    return {"items": [_session_out(s) for s in items]}
+
+
+class StockCountStartIn(StrictModel):
+    notes: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/stock-counts", status_code=201, responses={201: {"model": StockCountSessionOut}})
+def start_stock_count(
+    body: StockCountStartIn,
+    session: WriteSession,
+    ctx: Annotated[CurrentContext, Depends(require(Permission.INVENTORY_ADJUST))],
+) -> dict[str, Any]:
+    """Start a physical stock count for the caller's branch (Feature A.6).
+
+    Refuses with `STOCK_COUNT_ALREADY_OPEN` if one is already open — two concurrent
+    counts of the same shelf is how a count gets applied twice.
+    """
+    service = StockCountService(session)
+    session_id = service.start(ctx, notes=body.notes)
+    return _session_out(service.get_session(ctx, session_id))
+
+
+@router.get("/stock-counts/{session_id}", responses={200: {"model": StockCountReviewOut}})
+def review_stock_count(
+    session_id: uuid.UUID,
+    session: ReadSession,
+    ctx: Annotated[CurrentContext, Depends(require(Permission.INVENTORY_ADJUST))],
+) -> dict[str, Any]:
+    """Every product with a balance in the branch, counted or not, with the
+    **current** system quantity and the discrepancy (`null` until counted)."""
+    service = StockCountService(session)
+    sess = service.get_session(ctx, session_id)
+    items = service.review(ctx, session_id)
+    return {"session": _session_out(sess), "items": [_item_out(i) for i in items]}
+
+
+class StockCountItemIn(StrictModel):
+    counted_quantity: QuantityStr
+
+
+@router.put("/stock-counts/{session_id}/items/{product_id}")
+def record_stock_count_item(
+    session_id: uuid.UUID,
+    product_id: uuid.UUID,
+    body: StockCountItemIn,
+    session: WriteSession,
+    ctx: Annotated[CurrentContext, Depends(require(Permission.INVENTORY_ADJUST))],
+) -> dict[str, Any]:
+    StockCountService(session).record_count(
+        ctx,
+        session_id,
+        product_id=product_id,
+        counted_quantity=parse_decimal(body.counted_quantity, field_name="counted_quantity"),
+    )
+    return {"recorded": True}
+
+
+@router.post(
+    "/stock-counts/{session_id}:finalize",
+    responses={200: {"model": StockCountFinalizeOut}},
+)
+def finalize_stock_count(
+    session_id: uuid.UUID,
+    session: WriteSession,
+    ctx: Annotated[CurrentContext, Depends(require(Permission.INVENTORY_ADJUST))],
+) -> dict[str, Any]:
+    """Apply every counted item's discrepancy as one adjustment movement each, against
+    the balance at this instant. Uncounted products are left alone entirely."""
+    return StockCountService(session).finalize(ctx, session_id)
+
+
+@router.post("/stock-counts/{session_id}:cancel")
+def cancel_stock_count(
+    session_id: uuid.UUID,
+    session: WriteSession,
+    ctx: Annotated[CurrentContext, Depends(require(Permission.INVENTORY_ADJUST))],
+) -> dict[str, Any]:
+    StockCountService(session).cancel(ctx, session_id)
+    return {"status": "cancelled"}
 
 
 def _json(value: Any) -> str:

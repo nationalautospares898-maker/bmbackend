@@ -264,6 +264,71 @@ def handle_drafts_mark_stale(payload: dict[str, Any]) -> None:
         logger.info("drafts_marked_stale", extra={"count": total})
 
 
+# --- low_stock.scan ------------------------------------------------------------
+
+
+def handle_low_stock_scan(payload: dict[str, Any]) -> None:
+    """Raise/resolve low-stock alerts across every business (Feature A.3)."""
+    from bm.domain.notifications.low_stock import scan_business
+
+    with transaction() as session:
+        targets = (
+            [uuid.UUID(str(payload["business_id"]))]
+            if payload.get("business_id")
+            else _business_ids(session)
+        )
+        for business_id in targets:
+            counts = scan_business(session, business_id)
+            if counts["raised"] or counts["resolved"]:
+                logger.info("low_stock_scanned", extra={"business_id": str(business_id), **counts})
+
+
+# --- reminders.check_schedules --------------------------------------------------
+
+
+def handle_reminders_check_schedules(payload: dict[str, Any]) -> None:
+    """Fire every enabled, due reminder schedule (Feature A.5)."""
+    from bm.domain.reminders import service as reminders
+
+    with transaction() as session:
+        targets = (
+            [uuid.UUID(str(payload["business_id"]))]
+            if payload.get("business_id")
+            else _business_ids(session)
+        )
+        now = SystemClock().now()
+        for business_id in targets:
+            reminders.ensure_defaults(session, business_id)
+            ctx = _system_context(session, business_id)
+            fired = reminders.check_and_fire(session, business_id, ctx.business_timezone, now)
+            if fired:
+                logger.info(
+                    "reminders_fired", extra={"business_id": str(business_id), "count": fired}
+                )
+
+
+# --- orders.nudge ----------------------------------------------------------------
+
+
+def handle_orders_nudge(payload: dict[str, Any]) -> None:
+    """Resurface pending orders left unattended for ten minutes (Feature B.4)."""
+    from bm.domain.orders import service as orders
+
+    with transaction() as session:
+        targets = (
+            [uuid.UUID(str(payload["business_id"]))]
+            if payload.get("business_id")
+            else _business_ids(session)
+        )
+        now = SystemClock().now()
+        for business_id in targets:
+            nudged = orders.nudge_pending(session, business_id, now)
+            if nudged:
+                logger.info(
+                    "orders_nudged", extra={"business_id": str(business_id), "count": nudged}
+                )
+
+
 # --- notifications.dispatch ---------------------------------------------------
 
 
@@ -287,6 +352,9 @@ REGISTRY: dict[JobKind, Callable[[dict[str, Any]], None]] = {
     JobKind.IDEMPOTENCY_PRUNE: handle_idempotency_prune,
     JobKind.DRAFTS_MARK_STALE: handle_drafts_mark_stale,
     JobKind.NOTIFICATIONS_DISPATCH: handle_notifications_dispatch,
+    JobKind.LOW_STOCK_SCAN: handle_low_stock_scan,
+    JobKind.REMINDERS_CHECK_SCHEDULES: handle_reminders_check_schedules,
+    JobKind.ORDERS_NUDGE: handle_orders_nudge,
 }
 
 #: The string keys this module installs. `tests/unit/test_job_kinds.py` asserts they are

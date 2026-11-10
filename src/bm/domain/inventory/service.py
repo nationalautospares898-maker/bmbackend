@@ -104,6 +104,10 @@ class MovementReportLine:
     stock_before: Decimal
     stock_after: Decimal
     reason: str
+    #: `stock_count`, `invoice`, `purchase`, `stock_sheet`, `manual`, … — lets the screen
+    #: say "Stock Count" rather than leaving a correction and a count indistinguishable
+    #: once both show up as `adjustment_increase`.
+    source_type: str | None
     #: The invoice number or the supplier's document number, when the movement has one.
     #: `None` for a stock-sheet entry, a correction or the opening figure — those have no
     #: document, and a placeholder would imply one exists.
@@ -118,9 +122,11 @@ class MovementReportLine:
 
 @dataclass(frozen=True, slots=True)
 class MovementReport:
-    """A day's movements plus the totals the owner reads first."""
+    """A day's (or a date range's) movements plus the totals the owner reads first."""
 
     on_date: date
+    #: Equal to `on_date` for a single-day report; the last day of the range otherwise.
+    end_date: date
     kind: str
     lines: list[MovementReportLine]
     #: Distinct products, not rows: five movements of one part affect one product.
@@ -505,9 +511,20 @@ class InventoryService:
         return list(self._session.execute(query).scalars().all())
 
     def movement_report(
-        self, ctx: AuthContext, *, on_date: date, kind: str, limit: int = 1000
+        self,
+        ctx: AuthContext,
+        *,
+        on_date: date,
+        kind: str,
+        end_date: date | None = None,
+        limit: int = 1000,
     ) -> MovementReport:
-        """Every stock movement of one business-local day, grouped as added or sold.
+        """Every stock movement of a business-local date range, grouped by `kind`.
+
+        `end_date` is optional and defaults to `on_date`, so every existing single-day
+        caller is unaffected — passing a later `end_date` is strictly additive, widening
+        the same query to a range (the owner's Stock Report, start date + end date) rather
+        than introducing a second code path that could disagree with this one.
 
         The owner already has a per-product history; this answers the other question —
         *what moved today?* — and it is read from the same append-only ledger, so the two
@@ -535,6 +552,12 @@ class InventoryService:
           was finalised, which is the whole of "drafts and unconfirmed sales are excluded"
           — they never reach this table. Reprinting a bill writes no movement, and a
           credit payment moves money rather than goods, so neither can appear.
+        * `adjusted` — every **other** decrease (`quantity_delta < 0` and `reason !=
+          'sale'`): a correction downwards, scrap, a transfer out, a supplier return.
+          Without this bucket these rows appeared in neither `added` nor `sold` and the
+          report silently under-counted what left the shelf — the Stock Report (owner
+          request) is what exposed the gap, and the fix is additive rather than a
+          reclassification of what `added`/`sold` already meant.
 
         A bill cancelled **later** keeps its original deduction on the day it happened and
         gains a reversing row on the day it was cancelled. That is the ledger's own
@@ -546,8 +569,11 @@ class InventoryService:
         trip rather than two hundred.
         """
         ctx.require(Permission.CATALOG_READ)
-        if kind not in {"added", "sold"}:
-            raise ValidationFailed({"kind": "Choose either stock added or stock sold."})
+        if kind not in {"added", "sold", "adjusted"}:
+            raise ValidationFailed({"kind": "Choose stock added, stock sold, or adjustments."})
+        end = end_date or on_date
+        if end < on_date:
+            raise ValidationFailed({"end_date": "The end date cannot be before the start date."})
 
         # The same business-local day boundary `ReportService.daily_sales` uses, so
         # "today" means the same thing on this report as it does on Daily Bills. A sale at
@@ -608,7 +634,10 @@ class InventoryService:
                     Purchase.business_id == StockMovement.business_id,
                 ),
             )
-            .where(StockMovement.business_id == ctx.business_id, local_day == on_date)
+            .where(
+                StockMovement.business_id == ctx.business_id,
+                local_day.between(on_date, end),
+            )
             # Deterministic: two identical requests return the same order, and a
             # same-transaction tie is broken by the time-ordered movement id.
             .order_by(StockMovement.created_at.asc(), StockMovement.id.asc())
@@ -620,8 +649,13 @@ class InventoryService:
             query = query.where(StockMovement.branch_id == ctx.branch_id)
         if kind == "added":
             query = query.where(StockMovement.quantity_delta > 0)
-        else:
+        elif kind == "sold":
             query = query.where(StockMovement.reason == MovementReason.SALE)
+        else:
+            query = query.where(
+                StockMovement.quantity_delta < 0,
+                StockMovement.reason != MovementReason.SALE,
+            )
 
         rows = self._session.execute(query).all()
 
@@ -640,6 +674,7 @@ class InventoryService:
                 stock_before=row.balance_after - row.quantity_delta,
                 stock_after=row.balance_after,
                 reason=str(row.reason),
+                source_type=row.source_type,
                 reference=row.invoice_number or row.supplier_document_number,
                 # `None` for anything that is not a sale, so the client shows nothing
                 # rather than guessing "cash" for a correction.
@@ -654,6 +689,7 @@ class InventoryService:
 
         return MovementReport(
             on_date=on_date,
+            end_date=end,
             kind=kind,
             lines=lines,
             products=len({line.product_id for line in lines}),
