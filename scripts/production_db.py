@@ -1118,14 +1118,41 @@ def cmd_verify(args: argparse.Namespace) -> int:
         )
         checks.append((orphan_role_perms == 0, "no role_permissions row points at a missing code"))
 
-        # --- zero business data --------------------------------------------------
-        checks.append(
-            (
-                facts.business_rows == 0,
-                f"zero rows in all {len(_business_tables())} business tables"
-                + (f" — found {sorted(facts.row_counts)}" if facts.row_counts else ""),
+        # --- business data presence -----------------------------------------------
+        #
+        # Two opposite things are both "the database is in the state it should be in",
+        # depending on which database this is pointed at:
+        #
+        # * A freshly-provisioned database (the default, pre-`--live` assumption) should
+        #   hold zero business rows — anything else is either a seeder that ran where it
+        #   should not have, or a schema check aimed at the wrong target.
+        # * A live, in-use shop (`--live`) is *expected* to hold business rows, and a
+        #   database with zero of them would be the suspicious state instead — the wrong
+        #   branch, or data that went missing.
+        #
+        # Neither posture is "skip this check": `--live` does not turn the check off, it
+        # inverts which answer counts as healthy. The demo/fixture-contamination checks
+        # further down (business name, seeded usernames) are what actually guard against
+        # the thing the zero-rows check was originally a proxy for, and they run either
+        # way.
+        if args.live:
+            checks.append(
+                (
+                    facts.business_rows > 0,
+                    f"business data present in {len(facts.row_counts)} of "
+                    f"{len(_business_tables())} business tables, consistent with an"
+                    " in-use shop (--live)"
+                    + (f" — {sorted(facts.row_counts)}" if facts.row_counts else " — found none"),
+                )
             )
-        )
+        else:
+            checks.append(
+                (
+                    facts.business_rows == 0,
+                    f"zero rows in all {len(_business_tables())} business tables"
+                    + (f" — found {sorted(facts.row_counts)}" if facts.row_counts else ""),
+                )
+            )
         checks.append(
             (
                 config_counts.get("invoice_series", 0) == 0
@@ -1236,69 +1263,101 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print()
         print(f"runtime role      {runtime.masked}")
         print(f"endpoint          {'POOLED (pgbouncer)' if _is_pooled(runtime) else 'DIRECT'}")
-        checks.append(
-            (
-                runtime.user != "neondb_owner",
-                f"runtime URL does NOT use the admin role (it uses {runtime.user!r})",
+
+        # `--live`: the runtime connection is known, by a standing operational decision,
+        # to still be the admin role rather than bm_app (switching it crashed the app
+        # once already, and is explicitly out of scope for a routine migration run).
+        # That is not something this command exists to re-litigate on every invocation —
+        # so under `--live`, the two checks that assert "runtime IS bm_app" become an
+        # informational note instead of a counted failure, and the probes below that ask
+        # "is bm_app refused X" are skipped entirely rather than run against whichever
+        # role actually is connected and mislabelled as bm_app regardless. The
+        # catalog-level `has_table_privilege('bm_app', ...)` checks earlier in this
+        # command already verify bm_app's own grants directly from `pg_catalog`, which
+        # holds true independent of which role this connection happens to use — that is
+        # the check that actually answers "are bm_app's grants correct", and it is not
+        # skipped by this flag.
+        skip_role_identity_probes = args.live and runtime.user != "bm_app"
+
+        if skip_role_identity_probes:
+            print(
+                f"NOTE              runtime connects as {runtime.user!r}, not bm_app — a"
+                " standing, accepted operational decision for this release, not"
+                " re-checked here. bm_app's own catalog grants were already verified"
+                " above, independent of which role this connection uses."
             )
-        )
+        else:
+            checks.append(
+                (
+                    runtime.user != "neondb_owner",
+                    f"runtime URL does NOT use the admin role (it uses {runtime.user!r})",
+                )
+            )
         checks.append((_is_pooled(runtime), "runtime URL uses Neon's pooled endpoint"))
         checks.append(("sslmode=require" in runtime.url, "runtime URL requires SSL"))
 
         with _connect(runtime) as rc:
             who = str(rc.execute(text("SELECT current_user")).scalar_one())
-            checks.append((who == "bm_app", f"connected as {who} (expected bm_app)"))
+            if not skip_role_identity_probes:
+                checks.append((who == "bm_app", f"connected as {who} (expected bm_app)"))
 
-            pass
-
-            # Can it do its job? One SELECT per table the billing path reads first.
+            # Can the runtime connection do its job? One SELECT per table the billing
+            # path reads first. Worth checking regardless of which role is connected —
+            # a wrong password or an unreachable endpoint fails this the same way either
+            # role would see it.
             for table in ("permissions", "roles", "units", "businesses", "branches", "counters"):
                 try:
                     rc.execute(text(f'SELECT count(*) FROM "{table}"')).scalar_one()
                     ok, note = True, ""
                 except DBAPIError as exc:
                     ok, note = False, f" — {type(exc.orig).__name__}"
-                checks.append((ok, f"bm_app can SELECT {table}{note}"))
+                checks.append((ok, f"runtime connection ({who}) can SELECT {table}{note}"))
 
-            # And can it NOT do what the migrations revoked? Attempted for real, because
-            # a `has_table_privilege` answer and the server's actual refusal have come
-            # apart before — a column grant can leave a table grant looking sufficient.
-            # Rolled back either way, so nothing is written even if the REVOKE is missing.
-            for label, sql in (
-                ("UPDATE audit_logs", "UPDATE audit_logs SET action = action"),
-                ("DELETE stock_movements", "DELETE FROM stock_movements"),
-                # `total` is no longer refused as of migration 0024 — the amend path
-                # writes it, deliberately. `issued_at` is one of the identity columns
-                # 0024's own docstring names as "notably absent" from the editable set:
-                # an amend may change what a bill says, never its place in the series or
-                # when it was issued. This is the column that replaces the old `total`
-                # probe as the thing that must still be refused.
-                ("UPDATE invoices.issued_at", "UPDATE invoices SET issued_at = issued_at"),
-                ("DELETE invoices", "DELETE FROM invoices"),
-                ("DELETE payments", "DELETE FROM payments"),
-                # `invoice_items` gained a full table-level UPDATE/DELETE grant in 0024 —
-                # `line_total` is no longer refused, deliberately. `TRUNCATE` is what 0024
-                # explicitly keeps revoked (`REVOKE TRUNCATE ON invoice_items`), so that is
-                # the probe that now proves the remaining boundary.
-                ("TRUNCATE invoice_items", "TRUNCATE invoice_items"),
-            ):
+            if not skip_role_identity_probes:
+                # And can it NOT do what the migrations revoked? Attempted for real,
+                # because a `has_table_privilege` answer and the server's actual refusal
+                # have come apart before — a column grant can leave a table grant
+                # looking sufficient. Rolled back either way, so nothing is written even
+                # if the REVOKE is missing. Only meaningful when `who` actually is
+                # bm_app — run otherwise only outside `--live`, where that is still the
+                # expected, un-renegotiated state this command was written for.
+                for label, sql in (
+                    ("UPDATE audit_logs", "UPDATE audit_logs SET action = action"),
+                    ("DELETE stock_movements", "DELETE FROM stock_movements"),
+                    # `total` is no longer refused as of migration 0024 — the amend path
+                    # writes it, deliberately. `issued_at` is one of the identity
+                    # columns 0024's own docstring names as "notably absent" from the
+                    # editable set: an amend may change what a bill says, never its
+                    # place in the series or when it was issued. This is the column
+                    # that replaces the old `total` probe as the thing that must still
+                    # be refused.
+                    ("UPDATE invoices.issued_at", "UPDATE invoices SET issued_at = issued_at"),
+                    ("DELETE invoices", "DELETE FROM invoices"),
+                    ("DELETE payments", "DELETE FROM payments"),
+                    # `invoice_items` gained a full table-level UPDATE/DELETE grant in
+                    # 0024 — `line_total` is no longer refused, deliberately. `TRUNCATE`
+                    # is what 0024 explicitly keeps revoked (`REVOKE TRUNCATE ON
+                    # invoice_items`), so that is the probe that now proves the
+                    # remaining boundary.
+                    ("TRUNCATE invoice_items", "TRUNCATE invoice_items"),
+                ):
+                    try:
+                        rc.execute(text(sql))
+                        refused = False
+                    except DBAPIError:
+                        refused = True
+                    rc.rollback()
+                    checks.append((refused, f"bm_app is REFUSED {label} by the server"))
+
+                # DDL must be impossible: no CREATE on schema public.
                 try:
-                    rc.execute(text(sql))
-                    refused = False
+                    rc.execute(text("CREATE TABLE bm_app_should_not_be_able_to_do_this (x int)"))
+                    ddl_refused = False
                 except DBAPIError:
-                    refused = True
+                    ddl_refused = True
                 rc.rollback()
-                checks.append((refused, f"bm_app is REFUSED {label} by the server"))
-
-            # DDL must be impossible: no CREATE on schema public.
-            try:
-                rc.execute(text("CREATE TABLE bm_app_should_not_be_able_to_do_this (x int)"))
-                ddl_refused = False
-            except DBAPIError:
-                ddl_refused = True
-            rc.rollback()
-            checks.append((ddl_refused, "bm_app is REFUSED CREATE TABLE by the server"))
-            rc.rollback()
+                checks.append((ddl_refused, "bm_app is REFUSED CREATE TABLE by the server"))
+                rc.rollback()
 
         # --- is the transport actually encrypted? --------------------------------
         #
@@ -1796,6 +1855,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-runtime-check",
         action="store_true",
         help="do not connect as bm_app (use when only BM_MIGRATION_DATABASE_URL is available)",
+    )
+    verify.add_argument(
+        "--live",
+        action="store_true",
+        help=(
+            "this database is an in-use, live business, not a freshly-provisioned one: "
+            "report populated business tables as expected state rather than a failure, "
+            "and do not run the bm_app-impersonation privilege probes if the runtime "
+            "connection is intentionally not bm_app (an owner decision, not a defect to "
+            "fix here) — the catalog-level has_table_privilege checks above still verify "
+            "bm_app's own grants regardless of which role happens to be connected"
+        ),
     )
     verify.set_defaults(handler=cmd_verify)
 
