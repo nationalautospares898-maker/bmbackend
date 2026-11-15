@@ -142,6 +142,14 @@ _TABLES = (
     "sync_operations",
     "outbox_events",
     "notifications",
+    # Feature B (orders) added `orders.branch_id` as a plain FK to `branches` after
+    # this list was last written — without it here, `--reset` fails trying to delete
+    # `branches` while an order still references one, on any E2E run that created so
+    # much as a single order (NAS-NEW-01's persistent panel makes that the common
+    # case, not an edge case, since every `GET /orders`-driving session leaves one
+    # the moment the owner writes a note down).
+    "orders",
+    "reminder_schedules",
     "jobs",
     "idempotency_keys",
     "login_attempts",

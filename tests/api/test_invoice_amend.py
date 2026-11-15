@@ -773,9 +773,12 @@ def test_an_omitted_header_field_is_left_alone(
 # --- refusals -----------------------------------------------------------------
 
 
-def test_a_reason_is_required(
+def test_a_too_short_reason_is_refused(
     api_client: TestClient, headers: dict[str, str], billed: dict[str, Any]
 ) -> None:
+    """A reason is optional (owner correction, 2026-11-14), but one that *is* typed
+    still has to say something — one character is refused the same way it always was,
+    just by the domain floor now rather than the API schema's own `min_length`."""
     response = _amend(
         api_client,
         headers,
@@ -785,6 +788,48 @@ def test_a_reason_is_required(
         reason="x",
     )
     assert response.status_code == 422, response.text
+
+
+def test_a_blank_reason_is_accepted_and_recorded_as_none(
+    api_client: TestClient, headers: dict[str, str], billed: dict[str, Any]
+) -> None:
+    """Owner correction, 2026-11-14: a cashier may save an edit without saying why.
+    The revision is still written — the audit trail is never skipped — just with no
+    reason on it, rather than one invented to satisfy the old floor."""
+    response = _amend(
+        api_client,
+        headers,
+        billed["invoice"]["id"],
+        version=1,
+        lines=[{"product_id": billed["product_id"], "quantity": "3.000", "unit_price": "100.0000"}],
+        reason="",
+    )
+    assert response.status_code == 200, response.text
+
+    revisions = api_client.get(
+        f"/api/v1/invoices/{billed['invoice']['id']}/revisions", headers=headers
+    )
+    assert revisions.status_code == 200, revisions.text
+    [revision] = revisions.json()["items"]
+    assert revision["reason"] is None
+
+
+def test_an_omitted_reason_is_accepted(
+    api_client: TestClient, headers: dict[str, str], billed: dict[str, Any]
+) -> None:
+    """The field need not even be sent — `None` behaves exactly like `""`."""
+    body = {
+        "expected_version": 1,
+        "lines": [
+            {"product_id": billed["product_id"], "quantity": "3.000", "unit_price": "100.0000"}
+        ],
+    }
+    response = api_client.post(
+        f"/api/v1/invoices/{billed['invoice']['id']}:amend",
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        json=body,
+    )
+    assert response.status_code == 200, response.text
 
 
 def test_an_empty_line_set_is_refused(
@@ -1062,11 +1107,13 @@ def test_revisions_of_another_tenants_invoice_is_a_404(
 
 # --- domain-level refusals (below what the API schema already enforces) --------
 #
-# `AmendRequest` mirrors these three checks exactly — `reason: Field(min_length=5)`,
-# `lines: Field(min_length=1)`, and `str_strip_whitespace=True` ahead of
-# `oversell_reason`'s own `min_length=10` — so no HTTP request can reach the
-# corresponding branch in `InvoiceAmendService.amend`. They stay as real guards for any
-# other caller of the service, and are exercised directly here rather than papered over.
+# `lines: Field(min_length=1)` and `oversell_reason`'s own `min_length=10` are mirrored
+# exactly by `AmendRequest`, so no HTTP request can reach the corresponding branch in
+# `InvoiceAmendService.amend` for those two. The reason floor is different since the
+# owner's 2026-11-14 correction: `AmendRequest.reason` no longer has a `min_length` at
+# all (a blank reason is now a valid request, reaching the service as `""` or `None`),
+# so `test_a_too_short_reason_is_refused` above *does* exercise this same floor through
+# the API — it is tested at both layers deliberately, not duplicated by accident.
 
 
 def _ctx(tenant: Tenant, user: UserFixture, role: SystemRole = SystemRole.OWNER) -> AuthContext:

@@ -38,6 +38,7 @@ from bm.domain.auth.permissions import Permission
 from bm.domain.catalog.service import CatalogService
 from bm.domain.customers.service import CustomerService
 from bm.domain.inventory.service import InventoryService, MovementRequest
+from bm.domain.notifications import service as notifications
 from bm.domain.sales.drafts import DraftService
 from bm.domain.sales.numbering import NumberingService
 from bm.domain.settings.defaults import SettingKey
@@ -71,7 +72,15 @@ from bm.domain.shared.money import (
 )
 from bm.domain.shared.quantity import validate_quantity
 from bm.domain.sync.idempotency import IdempotencyClaim, IdempotencyService
-from bm.infra.db.enums import DocumentKind, DraftStatus, MovementReason, PaymentStatus, PriceSource
+from bm.infra.db.enums import (
+    DocumentKind,
+    DraftStatus,
+    MovementReason,
+    NotificationKind,
+    NotificationSeverity,
+    PaymentStatus,
+    PriceSource,
+)
 from bm.infra.db.models.sales import Invoice, InvoiceItem
 
 FINALIZE_ENDPOINT = "POST /sales:finalize"
@@ -756,6 +765,34 @@ class SalesService:
                         "name": line.name,
                         "quantity": format(remaining, "f"),
                     }
+                )
+                # Persist this immediately, in the same transaction as the sale, rather
+                # than leaving it to wait for the periodic `low_stock.scan_business`
+                # scan (NAS-NEW-03: the inline warning this rode along with on the
+                # finalize response is being removed from the screen, and the owner
+                # must not lose the alert along with the screen). Reuses the exact
+                # same `NotificationKind.LOW_STOCK` kind/entity as that scan so the two
+                # dedup against each other rather than ever doubling up — this call's
+                # `<=` is deliberately its own threshold (see the docstring above) and
+                # is not meant to become the scan's `<`; each still computes its own.
+                notifications.notify_once(
+                    self._session,
+                    business_id=ctx.business_id,
+                    kind=NotificationKind.LOW_STOCK,
+                    severity=(
+                        NotificationSeverity.CRITICAL
+                        if remaining <= 0
+                        else NotificationSeverity.WARNING
+                    ),
+                    title=f"{line.name} is running low",
+                    body=(
+                        f"{format(remaining, 'f')} left, below the minimum of "
+                        f"{format(line.reorder_level, 'f')}."
+                        if remaining > 0
+                        else f"Out of stock (minimum is {format(line.reorder_level, 'f')})."
+                    ),
+                    entity_type="product",
+                    entity_id=line.product_id,
                 )
         if not low:
             return []

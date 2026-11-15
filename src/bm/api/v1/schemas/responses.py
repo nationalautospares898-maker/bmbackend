@@ -423,7 +423,9 @@ class InvoiceRevisionOut(Out):
     only at the privilege level."""
 
     revision_number: int
-    reason: str
+    #: `None` when the edit was saved with no reason given (owner correction,
+    #: 2026-11-14) — never a placeholder invented to fill the field.
+    reason: str | None
     created_at: str
     edited_by: str | None
     total: MoneyStr

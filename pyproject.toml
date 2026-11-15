@@ -33,6 +33,7 @@ dependencies = [
     "pyjwt>=2.9,<3",
     "python-multipart>=0.0.18,<0.1",
     "openpyxl>=3.1,<4",
+    "psycopg2-binary>=2.9.13",
 ]
 
 [project.optional-dependencies]

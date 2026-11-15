@@ -40,9 +40,12 @@ PERMISSION = "admin.settings.manage"
 
 #: The two reminders the owner named explicitly. Seeded once per business by
 #: `ensure_defaults`; afterwards indistinguishable from a custom one except by label.
-_BUILTIN_DEFAULTS: tuple[tuple[str, str, time], ...] = (
-    ("bill_reminder", "Pending bills (8:45 AM)", time(8, 45)),
-    ("stock_reminder", "Low stock (5:00 PM)", time(17, 0)),
+#: `bill_reminder` is `interval_hours`-based (NAS-NEW-05, owner request: pending credit
+#: bills must resurface hourly, not once a day) — the other three fields of its tuple
+#: slot are `None`/unused for this row; `stock_reminder` stays a daily `fire_time`.
+_BUILTIN_DEFAULTS: tuple[tuple[str, str, time | None, int | None], ...] = (
+    ("bill_reminder", "Pending bills (hourly)", None, 1),
+    ("stock_reminder", "Low stock (5:00 PM)", time(17, 0), None),
 )
 
 
@@ -86,14 +89,15 @@ def ensure_defaults(session: Session, business_id: uuid.UUID) -> None:
             {"business_id": business_id},
         ).all()
     }
-    for kind, label, fire_time in _BUILTIN_DEFAULTS:
+    for kind, label, fire_time, interval_hours in _BUILTIN_DEFAULTS:
         if kind in existing:
             continue
         session.execute(
             text(
                 """
-                INSERT INTO reminder_schedules (id, business_id, kind, label, fire_time)
-                VALUES (:id, :business_id, :kind, :label, :fire_time)
+                INSERT INTO reminder_schedules
+                    (id, business_id, kind, label, fire_time, interval_hours)
+                VALUES (:id, :business_id, :kind, :label, :fire_time, :interval_hours)
                 """
             ),
             {
@@ -102,6 +106,7 @@ def ensure_defaults(session: Session, business_id: uuid.UUID) -> None:
                 "kind": kind,
                 "label": label,
                 "fire_time": fire_time,
+                "interval_hours": interval_hours,
             },
         )
 
@@ -171,8 +176,9 @@ def update_schedule(
 ) -> bool:
     """Edit a label, or enable/disable — the two things every reminder (built-in or
     custom) supports changing. Changing *when* a built-in fires is not exposed: the
-    owner asked for 8:45 and 5:00 by name, and a schedule that silently drifted off
-    those times would stop being the reminder it was named for."""
+    owner asked for the pending-bill reminder to be hourly and the stock reminder to
+    stay at 5:00 by name, and a schedule that silently drifted off that cadence would
+    stop being the reminder it was named for."""
     ctx.require(PERMISSION)
     values: dict[str, object] = {}
     if label is not None:

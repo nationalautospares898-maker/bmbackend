@@ -52,8 +52,10 @@ class InvoiceRevision(Base):
     #: 1 for the first edit's before-state. Unique per invoice, so the history can
     #: neither gain a gap nor a duplicate.
     revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    #: Mandatory and length-checked. "edit" is not a reason.
-    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    #: Optional (owner correction, 2026-11-14): `None` when the edit was saved with no
+    #: reason given. One that *is* given is still length-checked — "edit" is not a
+    #: reason — via the conditional `CHECK` below, not by `NOT NULL`.
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     edited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
@@ -82,7 +84,10 @@ class InvoiceRevision(Base):
 
     __table_args__ = (
         CheckConstraint("revision_number >= 1", name="ck_invoice_revisions__number"),
-        CheckConstraint("length(btrim(reason)) >= 5", name="ck_invoice_revisions__reason_present"),
+        CheckConstraint(
+            "reason IS NULL OR length(btrim(reason)) >= 5",
+            name="ck_invoice_revisions__reason_present",
+        ),
         UniqueConstraint(
             "invoice_id", "revision_number", name="uq_invoice_revisions__invoice_number"
         ),

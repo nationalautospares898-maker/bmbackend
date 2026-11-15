@@ -408,6 +408,9 @@ def test_a_future_reminder_suppresses_the_flat_cadence(
     handlers.handle_orders_nudge({"business_id": str(tenant.business_id)})
     migration_session.commit()
 
+    # `create_order` itself already raised one notification (NAS-NEW-06) — that is
+    # left exactly as it is; the assertion that matters here is that the flat cadence
+    # did not pile a second one on top of it while the future reminder is pending.
     open_reminders = migration_session.execute(
         text(
             "SELECT count(*) FROM notifications"
@@ -415,7 +418,12 @@ def test_a_future_reminder_suppresses_the_flat_cadence(
         ),
         {"o": order_id},
     ).scalar_one()
-    assert open_reminders == 0
+    assert open_reminders == 1
+
+    remind_at = migration_session.execute(
+        text("SELECT remind_at FROM orders WHERE id = :id"), {"id": order_id}
+    ).scalar_one()
+    assert remind_at is not None, "a future reminder must not be consumed early"
 
 
 def test_a_due_custom_reminder_fires_ahead_of_the_flat_cadence_and_is_consumed(
@@ -486,17 +494,9 @@ def test_the_bill_reminder_fires_only_when_a_credit_bill_is_outstanding(
     reminders.ensure_defaults(migration_session, tenant.business_id)
     migration_session.commit()
 
-    # Force the bill reminder's fire_time to the past so "due" does not depend on the
-    # wall clock at test time.
-    migration_session.execute(
-        text(
-            "UPDATE reminder_schedules SET fire_time = '00:00'"
-            " WHERE business_id = :b AND kind = 'bill_reminder'"
-        ),
-        {"b": tenant.business_id},
-    )
-    migration_session.commit()
-
+    # Hourly, `interval_hours`-based (NAS-NEW-05): freshly seeded with no
+    # `last_fired_at` yet, `_is_due` already treats it as due on the very first tick —
+    # nothing needs to be forced to make "due" independent of the wall clock here.
     handlers.handle_reminders_check_schedules({"business_id": str(tenant.business_id)})
     migration_session.commit()
     none_yet = migration_session.execute(
@@ -519,7 +519,7 @@ def test_the_bill_reminder_fires_only_when_a_credit_bill_is_outstanding(
     assert "1 credit bill" in fired.title
     assert "1000" in fired.body
 
-    # The next tick (fire_time already passed, same business-day) must not duplicate.
+    # The next tick, moments later, is nowhere near the one-hour interval — must not duplicate.
     handlers.handle_reminders_check_schedules({"business_id": str(tenant.business_id)})
     migration_session.commit()
     count = migration_session.execute(
@@ -580,3 +580,106 @@ def test_a_custom_interval_reminder_fires_once_the_interval_elapses(
         {"s": schedule_id},
     ).scalar_one()
     assert open_count == 1
+
+
+def test_the_pending_bill_reminder_refires_every_hour_while_still_outstanding(
+    api_client: TestClient,
+    headers: dict[str, str],
+    migration_session: Session,
+    tenant: Tenant,
+    owner: UserFixture,
+    engine_bound: None,
+    credit_sale_product: str,
+) -> None:
+    """NAS-NEW-05: the owner asked for pending credit bills to resurface hourly, not
+    once a day — this is the cadence itself, independent of the outstanding-balance
+    query already covered by `test_the_bill_reminder_fires_only_when_a_credit_bill_is_outstanding`."""
+    from bm.domain.reminders import service as reminders
+
+    reminders.ensure_defaults(migration_session, tenant.business_id)
+    migration_session.commit()
+    _credit_sale(api_client, headers, tenant, credit_sale_product)
+    migration_session.commit()
+
+    now = datetime.now(UTC)
+    fired_first = reminders.check_and_fire(
+        migration_session, tenant.business_id, "Asia/Kolkata", now
+    )
+    migration_session.commit()
+    assert fired_first == 1
+
+    # Thirty minutes later: well inside the hour, must not re-fire.
+    fired_soon = reminders.check_and_fire(
+        migration_session, tenant.business_id, "Asia/Kolkata", now + timedelta(minutes=30)
+    )
+    migration_session.commit()
+    assert fired_soon == 0
+
+    # An hour on: fires again, superseding the still-open one rather than piling up.
+    fired_later = reminders.check_and_fire(
+        migration_session, tenant.business_id, "Asia/Kolkata", now + timedelta(hours=1, minutes=1)
+    )
+    migration_session.commit()
+    assert fired_later == 1
+
+    open_count = migration_session.execute(
+        text(
+            "SELECT count(*) FROM notifications"
+            " WHERE business_id = :b AND kind = 'bill_reminder' AND status = 'active'"
+        ),
+        {"b": tenant.business_id},
+    ).scalar_one()
+    assert open_count == 1
+
+
+def test_a_fully_paid_credit_bill_stops_being_pending_and_the_reminder_goes_quiet(
+    api_client: TestClient,
+    headers: dict[str, str],
+    migration_session: Session,
+    tenant: Tenant,
+    owner: UserFixture,
+    engine_bound: None,
+    credit_sale_product: str,
+) -> None:
+    """A partially-paid credit bill must remain pending; a fully-paid one must not."""
+    from decimal import Decimal
+
+    from bm.domain.reminders import service as reminders
+
+    reminders.ensure_defaults(migration_session, tenant.business_id)
+    migration_session.commit()
+    invoice = _credit_sale(api_client, headers, tenant, credit_sale_product)
+    migration_session.commit()
+    customer_id = invoice["customer"]["id"]
+    half = str(Decimal(invoice["total"]) / 2)
+
+    now = datetime.now(UTC)
+    fired = reminders.check_and_fire(migration_session, tenant.business_id, "Asia/Kolkata", now)
+    migration_session.commit()
+    assert fired == 1, "a brand-new credit bill is pending"
+
+    # Partial payment: still outstanding, still pending, the hourly reminder still fires.
+    partial = api_client.post(
+        "/api/v1/payments",
+        headers={**headers, **_key()},
+        json={"customer_id": customer_id, "amount": half, "method": "cash"},
+    )
+    assert partial.status_code == 200, partial.text
+    fired_partial = reminders.check_and_fire(
+        migration_session, tenant.business_id, "Asia/Kolkata", now + timedelta(hours=1, minutes=1)
+    )
+    migration_session.commit()
+    assert fired_partial == 1, "a partially-paid credit bill is still pending"
+
+    # Full payment: no longer outstanding, the reminder goes quiet (no further firing).
+    full = api_client.post(
+        "/api/v1/payments",
+        headers={**headers, **_key()},
+        json={"customer_id": customer_id, "amount": half, "method": "cash"},
+    )
+    assert full.status_code == 200, full.text
+    fired_after_paid = reminders.check_and_fire(
+        migration_session, tenant.business_id, "Asia/Kolkata", now + timedelta(hours=2, minutes=2)
+    )
+    migration_session.commit()
+    assert fired_after_paid == 0, "a fully-paid credit bill must not be pending"

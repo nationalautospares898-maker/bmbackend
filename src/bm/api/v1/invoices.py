@@ -97,9 +97,12 @@ class AmendHeaderIn(StrictModel):
 class AmendRequest(StrictModel):
     #: The version the editor read. A mismatch is a stale edit and is refused.
     expected_version: int = Field(ge=1)
-    #: Mandatory. The database `CHECK` enforces a floor too, so a short reason is a
-    #: field error here rather than an integrity error there.
-    reason: str = Field(min_length=5, max_length=500)
+    #: Optional (owner correction, 2026-11-14): a cashier may save an edit without
+    #: saying why. `None` or blank means no reason was given and none is invented; a
+    #: reason that *is* given still has to say something — the service layer enforces
+    #: the same 5-character floor the database `CHECK` does, just not the presence of
+    #: a reason at all.
+    reason: str | None = Field(default=None, max_length=500)
     lines: list[AmendLineIn] = Field(min_length=1)
     header: AmendHeaderIn | None = None
     oversell_reason: str | None = Field(default=None, min_length=10, max_length=500)

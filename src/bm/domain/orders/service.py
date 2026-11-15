@@ -114,10 +114,19 @@ def create_order(
     phone: str | None,
 ) -> uuid.UUID:
     """Save an order. No field beyond the note itself is required (owner request: "do
-    not force the owner to fill unnecessary structured fields before saving")."""
+    not force the owner to fill unnecessary structured fields before saving").
+
+    Raises one notification immediately, reusing the same `order_reminder` kind and
+    dedup/resolve plumbing as `nudge_pending`/`complete_order`/`discard_order` below —
+    a new order *is* "a pending order needing attention", just at the earliest possible
+    moment, so it is not a second notification concept. `notify_once`'s dedup means the
+    ten-minute nudge will not double up on this same order until this one is cleared.
+    """
     if not body.strip():
         raise ValidationFailed({"body": "Write something down before saving."})
     order_id = uuid.uuid4()
+    body = body.strip()
+    customer_name = (customer_name or "").strip() or None
     session.execute(
         text(
             """
@@ -131,10 +140,21 @@ def create_order(
             "business_id": ctx.business_id,
             "branch_id": ctx.requires_branch,
             "user_id": ctx.user_id,
-            "customer_name": (customer_name or "").strip() or None,
+            "customer_name": customer_name,
             "phone": (phone or "").strip() or None,
-            "body": body.strip(),
+            "body": body,
         },
+    )
+    label = (customer_name or body[:40]).strip()
+    notifications.notify_once(
+        session,
+        business_id=ctx.business_id,
+        kind=NotificationKind.ORDER_REMINDER,
+        severity=NotificationSeverity.INFO,
+        title=f"New order: {label}",
+        body=body[:200],
+        entity_type="order",
+        entity_id=order_id,
     )
     return order_id
 
@@ -235,10 +255,14 @@ def nudge_pending(session: Session, business_id: uuid.UUID, now: datetime) -> in
     quiet *in addition to* the usual nudging.
 
     One open notification per order at a time (the `uq_notifications__active_per_entity`
-    index), refreshed rather than duplicated: a still-open reminder is left exactly as
-    it is — re-touching it would clear a read/dismissed state the owner may have set a
-    moment before this runs — and only an order with **no** open reminder (new, or its
-    last one was dismissed) gets a fresh one.
+    index), refreshed rather than duplicated — with one deliberate exception: a due
+    one-time `remind_at` always supersedes whatever is currently open for that order
+    (including the immediate notification `create_order` raises, or an untouched nudge
+    from earlier), because the owner asked for *that specific moment* and an unread
+    notification sitting from before must not silently absorb it. The flat ten-minute
+    cadence has no such override — an order with an open reminder already up is left
+    exactly as it is for that branch, since re-touching it would clear a read/dismissed
+    state the owner may have set a moment before this runs.
     """
     cutoff = now - timedelta(minutes=NUDGE_INTERVAL_MINUTES)
     due = session.execute(
@@ -248,17 +272,17 @@ def nudge_pending(session: Session, business_id: uuid.UUID, now: datetime) -> in
               FROM orders o
              WHERE o.business_id = :business_id
                AND o.status = 'pending'
-               AND NOT EXISTS (
-                     SELECT 1 FROM notifications n
-                      WHERE n.business_id = o.business_id
-                        AND n.kind = 'order_reminder'
-                        AND n.entity_id = o.id
-                        AND n.status = 'active'
-                   )
                AND (
                      (o.remind_at IS NOT NULL AND o.remind_at <= :now)
                      OR (
                            o.remind_at IS NULL
+                           AND NOT EXISTS (
+                                 SELECT 1 FROM notifications n
+                                  WHERE n.business_id = o.business_id
+                                    AND n.kind = 'order_reminder'
+                                    AND n.entity_id = o.id
+                                    AND n.status = 'active'
+                               )
                            AND (o.last_reminder_at IS NULL OR o.last_reminder_at <= :cutoff)
                          )
                    )
@@ -270,6 +294,15 @@ def nudge_pending(session: Session, business_id: uuid.UUID, now: datetime) -> in
     nudged = 0
     for row in due:
         label = (row.customer_name or row.body[:40]).strip()
+        if row.remind_at is not None:
+            # A due one-time reminder always gets a fresh notification — free the
+            # dedup slot first if something (e.g. the creation alert) still holds it.
+            notifications.resolve_for_entity(
+                session,
+                business_id=business_id,
+                kind=NotificationKind.ORDER_REMINDER,
+                entity_id=row.id,
+            )
         notifications.notify_once(
             session,
             business_id=business_id,

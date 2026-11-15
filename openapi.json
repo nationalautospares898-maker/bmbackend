@@ -12524,9 +12524,15 @@
             "title": "Expected Version"
           },
           "reason": {
-            "type": "string",
-            "maxLength": 500,
-            "minLength": 5,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Reason"
           },
           "lines": {
@@ -12565,7 +12571,6 @@
         "type": "object",
         "required": [
           "expected_version",
-          "reason",
           "lines"
         ],
         "title": "AmendRequest"
@@ -15394,7 +15399,14 @@
             "title": "Revision Number"
           },
           "reason": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Reason"
           },
           "created_at": {

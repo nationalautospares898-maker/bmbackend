@@ -621,6 +621,35 @@ def test_cash_sale_finalises_and_deducts_stock_exactly_once(
     assert sale_moves == 1
 
 
+def test_a_sale_that_drops_stock_to_the_reorder_level_raises_a_bell_notification(
+    api_client: TestClient,
+    owner_headers: dict[str, str],
+    migration_session: Session,
+    stocked: dict[str, Any],
+    tenant: Tenant,
+) -> None:
+    """NAS-NEW-03: the inline `LOW_STOCK_AFTER_SALE` warning on the finalize response
+    is no longer the only place this surfaces (the screen it rode along with is gone)
+    — it must also land in the bell immediately, not wait for the next periodic scan."""
+    product_id = stocked["product"]["id"]
+    # 10 in stock, reorder_level 2.000: selling 8 leaves exactly 2, "at or below".
+    response = api_client.post(
+        "/api/v1/sales:finalize",
+        headers={**owner_headers, **_key()},
+        json=_finalize_body(tenant, product_id, quantity="8.000"),
+    )
+    assert response.status_code == 201, response.text
+    codes = {w["code"] for w in response.json()["warnings"]}
+    assert "LOW_STOCK_AFTER_SALE" in codes
+
+    notified = api_client.get("/api/v1/notifications", headers=owner_headers).json()[
+        "notifications"
+    ]
+    matching = [n for n in notified if n["kind"] == "low_stock" and n["entity_id"] == product_id]
+    assert len(matching) == 1, notified
+    assert matching[0]["status"] == "active"
+
+
 def test_the_invoice_total_reconciles_in_the_database(
     api_client: TestClient,
     owner_headers: dict[str, str],

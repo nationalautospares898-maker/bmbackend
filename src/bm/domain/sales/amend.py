@@ -158,7 +158,9 @@ class AmendCommand:
     invoice_id: uuid.UUID
     #: The version the editor read. A mismatch under the lock is a stale edit.
     expected_version: int
-    reason: str
+    #: `None` (or blank) means the cashier chose not to say why — owner correction,
+    #: 2026-11-14. Never filled in on their behalf.
+    reason: str | None
     lines: list[AmendLine]
     header: AmendHeader = field(default_factory=AmendHeader)
     invoice_discount: InvoiceDiscount | None = None
@@ -176,9 +178,11 @@ class AmendResult:
     payment_status: str
 
 
-#: The minimum a reason has to say. Mirrors the cancellation reason floor and the
-#: database `CHECK`, so a short reason is refused with a field error rather than an
-#: integrity error.
+#: The minimum a reason has to say, **if one is given at all**. A reason is optional
+#: (owner correction, 2026-11-14) — this only stops someone typing "ok" to satisfy a
+#: box that no longer has to be filled in. Mirrors the database `CHECK`
+#: (`reason IS NULL OR length(btrim(reason)) >= 5`), so a too-short reason is refused
+#: with a field error rather than an integrity error.
 _MIN_REASON = 5
 
 
@@ -258,11 +262,16 @@ class InvoiceAmendService:
         """Apply an edit. One transaction; the caller commits."""
         ctx.require(Permission.BILLING_SALE_EDIT)
 
-        reason = cmd.reason.strip()
-        if len(reason) < _MIN_REASON:
+        # Optional: `None` or blank is "no reason given", kept as `None` rather than an
+        # invented placeholder — the owner's explicit instruction (2026-11-14). A reason
+        # that *is* given still has to be a reason, not a keystroke, so the floor stays
+        # for anything non-empty.
+        stripped = cmd.reason.strip() if cmd.reason else ""
+        if stripped and len(stripped) < _MIN_REASON:
             raise ValidationFailed(
-                {"reason": f"Say why this bill is being changed ({_MIN_REASON}+ characters)."}
+                {"reason": f"Say more, or leave it blank ({_MIN_REASON}+ characters)."}
             )
+        reason: str | None = stripped or None
         if not cmd.lines:
             raise EmptySale()
 
@@ -405,7 +414,7 @@ class InvoiceAmendService:
         invoice: _InvoiceRow,
         items: list[_ItemRow],
         *,
-        reason: str,
+        reason: str | None,
     ) -> int:
         """Write the complete before-state. Append-only; the next number in sequence."""
         next_number = self._session.execute(

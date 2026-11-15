@@ -104,6 +104,36 @@ def test_discarding_an_order_does_not_delete_the_record(
     assert order_id in [row["id"] for row in discarded]
 
 
+def test_creating_an_order_raises_an_active_notification_immediately(
+    api_client: TestClient, headers: dict[str, str]
+) -> None:
+    """New-order alerts must not wait for the ten-minute nudge (NAS-NEW-06): the owner
+    should see it the instant it is written down, without opening Orders or the bell."""
+    order_id = api_client.post(
+        "/api/v1/orders", headers=headers, json={"body": "2x Brake Shoe", "customer_name": "Ramesh"}
+    ).json()["id"]
+
+    notifications = api_client.get("/api/v1/notifications", headers=headers).json()["notifications"]
+    matching = [n for n in notifications if n["entity_id"] == order_id]
+    assert len(matching) == 1, notifications
+    assert matching[0]["kind"] == "order_reminder"
+    assert matching[0]["status"] == "active"
+    assert "Ramesh" in matching[0]["title"]
+
+
+def test_completing_an_order_resolves_its_creation_notification(
+    api_client: TestClient, headers: dict[str, str]
+) -> None:
+    order_id = api_client.post(
+        "/api/v1/orders", headers=headers, json={"body": "1x Clutch Plate"}
+    ).json()["id"]
+
+    api_client.post(f"/api/v1/orders/{order_id}:complete", headers=headers)
+
+    notifications = api_client.get("/api/v1/notifications", headers=headers).json()["notifications"]
+    assert order_id not in [n["entity_id"] for n in notifications]
+
+
 def test_a_completed_order_cannot_be_edited(
     api_client: TestClient, headers: dict[str, str]
 ) -> None:
@@ -281,9 +311,12 @@ def test_the_two_built_in_reminders_are_seeded_on_first_read(
     assert listed.status_code == 200, listed.text
     kinds = {row["kind"] for row in listed.json()["items"]}
     assert kinds == {"bill_reminder", "stock_reminder"}
-    times = {row["kind"]: row["fire_time"] for row in listed.json()["items"]}
-    assert times["bill_reminder"] == "08:45:00"
-    assert times["stock_reminder"] == "17:00:00"
+    by_kind = {row["kind"]: row for row in listed.json()["items"]}
+    # Hourly (NAS-NEW-05) — an interval, not a clock time, so pending credit bills
+    # resurface all day rather than once at a fixed hour.
+    assert by_kind["bill_reminder"]["interval_hours"] == 1
+    assert by_kind["bill_reminder"]["fire_time"] is None
+    assert by_kind["stock_reminder"]["fire_time"] == "17:00:00"
 
 
 def test_seeding_the_defaults_twice_does_not_duplicate_them(
