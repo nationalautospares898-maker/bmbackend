@@ -463,6 +463,14 @@ Index(
     unique=True,
     postgresql_where=text("status = 'active' AND entity_id IS NOT NULL"),
 )
+#: Migration `0029`. `active_for()` (`domain/notifications/service.py`) — the query
+#: behind the counter application's 30-second `GET /notifications` poll — filters on
+#: `business_id` and `status`. `read_at` is independent of `status` (see `mark_read`),
+#: so `ix_notifications__unread` above cannot serve this query at all; this is a plain
+#: index rather than another partial one because the predicate it supports is an `OR`
+#: across two `status` values, one of them further filtered by `snoozed_until <= now()`
+#: at query time, which a partial index's fixed `WHERE` clause cannot encode.
+Index("ix_notifications__business_status", Notification.business_id, Notification.status)
 Index("ix_reminder_schedules__business", ReminderSchedule.business_id)
 Index(
     "ix_orders__pending",

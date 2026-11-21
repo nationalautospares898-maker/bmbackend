@@ -41,10 +41,22 @@ _CLAIM_SQL = text(
 )
 
 
+#: Set once the table has been seen to exist, so a true answer is never re-queried.
+#: `claim_and_run_one` runs on every tick of the worker's one-second loop (`worker.py`),
+#: forever — re-running this check on each tick was one real DB round trip a second for
+#: the life of the process, to answer a question that cannot change back to "no" once it
+#: is "yes": a migration does not un-create a table while a worker is running against it.
+_jobs_table_confirmed = False
+
+
 def _jobs_table_exists() -> bool:
+    global _jobs_table_confirmed
+    if _jobs_table_confirmed:
+        return True
     with transaction() as session:
         row = session.execute(text("SELECT to_regclass('jobs') IS NOT NULL")).scalar()
-    return bool(row)
+    _jobs_table_confirmed = bool(row)
+    return _jobs_table_confirmed
 
 
 def claim_and_run_one(worker_id: str = "worker") -> bool:
