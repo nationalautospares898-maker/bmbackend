@@ -564,9 +564,11 @@ business-logic file touched, confirmed by `git diff` before commit.
 
 | Check | Result |
 |---|---|
-| GitHub deployment status for `b9faf37` | *(see live addendum below — checked at push time)* |
+| GitHub deployment status for `b9faf37` | **`success`** — Vercel: "Deployment has completed" |
+| Live bundle fingerprint, before vs. after | Before: `assets/index-DJl4wgXl.js`. After: **`assets/index-CAY6ZSC1.js`** — a genuinely new hash (unlike the earlier dependency-only push, which was byte-identical by design, this push contains real new code, so a changed hash is the expected and correct signal) |
+| Live bundle size | `Content-Length: 492071` bytes — matches the local build's reported `492.09 kB` |
+| `GET /` freshness | `Age: 0`, `Last-Modified` updated to the deploy time — confirmed not a stale cached response |
 | `GET /readyz` (backend, unaffected by this push) | `"status":"ready"`, migrations `"ok"` at `0029` |
-| `GET /` (frontend) | `200`, confirmed before and after the push |
 
 **What this cannot verify, stated plainly, same limitation as every prior pass:** whether the
 counter PC's actual open tab(s) have picked up this or the prior session's fix, because no
