@@ -29,6 +29,7 @@ from bm.infra.alerting.channel import Alert, AlertChannel, Severity
 from bm.infra.db.enums import NotificationKind, NotificationSeverity, OutboxStatus
 from bm.infra.db.models.infra import Notification, OutboxEvent
 from bm.infra.db.rows import rows_affected
+from bm.infra.db.session import transaction
 
 #: Event type for an operational alert on the outbox. Other event types (future
 #: webhooks, e-invoice pushes) share the table and are routed by this column.
@@ -313,36 +314,50 @@ def snooze(
     )
 
 
-def dispatch_pending(session: Session, channel: AlertChannel, *, limit: int = 50) -> dict[str, int]:
+def dispatch_pending(channel: AlertChannel, *, limit: int = 50) -> dict[str, int]:
     """Deliver pending outbox events. Returns counts, for the worker's log.
 
+    Three transactions, not one — claim, then (per event) deliver outside any lock,
+    then record the outcome:
+
     `FOR UPDATE SKIP LOCKED` so two workers never deliver the same alert twice, matching
-    how the job queue itself claims work (ADR-004).
+    how the job queue itself claims work (ADR-004). The claiming transaction commits
+    immediately, releasing those row locks, *before* any delivery is attempted — an
+    outbound HTTP call (up to `alert_timeout_seconds`) must never run while a row lock is
+    held, or a slow/unreachable webhook would block every other claimer for that long
+    (`ARCHITECTURE.md §7.1`). This function therefore owns its own transaction
+    boundaries rather than receiving a session, per the exception `ARCHITECTURE.md
+    §5.1` rule 2 makes for code that is itself the top of a unit of work.
     """
-    claimed = session.execute(
-        text(
-            """
-            SELECT id, event_type, payload, attempts
-              FROM outbox_events
-             WHERE status = 'pending'
-             ORDER BY created_at
-             FOR UPDATE SKIP LOCKED
-             LIMIT :limit
-            """
-        ),
-        {"limit": limit},
-    ).all()
+    with transaction() as session:
+        claimed = session.execute(
+            text(
+                """
+                SELECT id, event_type, payload, attempts
+                  FROM outbox_events
+                 WHERE status = 'pending'
+                 ORDER BY created_at
+                 FOR UPDATE SKIP LOCKED
+                 LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).all()
+        # Materialised into plain data before the transaction (and its row locks) closes.
+        events = [
+            (row.id, str(row.event_type), dict(row.payload or {}), int(row.attempts or 0))
+            for row in claimed
+        ]
 
     sent = failed = skipped = 0
-    for row in claimed:
-        if str(row.event_type) != ALERT_EVENT:
+    for event_id, event_type, payload, prev_attempts in events:
+        if event_type != ALERT_EVENT:
             # Not ours. Left pending for whichever consumer owns it rather than marked
             # dispatched — silently consuming another handler's event is how a future
             # e-invoice push would vanish.
             skipped += 1
             continue
 
-        payload = dict(row.payload or {})
         delivered = channel.send(
             Alert(
                 title=str(payload.get("title", "Alert")),
@@ -351,36 +366,37 @@ def dispatch_pending(session: Session, channel: AlertChannel, *, limit: int = 50
                 kind=str(payload.get("kind", "unknown")),
             )
         )
-        attempts = int(row.attempts or 0) + 1
+        attempts = prev_attempts + 1
 
-        if delivered:
-            session.execute(
-                text(
-                    "UPDATE outbox_events SET status = 'dispatched', attempts = :attempts,"
-                    " dispatched_at = now() WHERE id = :id"
-                ),
-                {"id": row.id, "attempts": attempts},
-            )
-            sent += 1
-        elif attempts >= MAX_DELIVERY_ATTEMPTS:
-            # `failed` is a visible dead-letter state, not a deletion. An operator can
-            # see exactly which alerts never reached anyone. `outbox_events` carries no
-            # `last_error` column — the reason is already in the structured log from
-            # `AlertChannel.send`, and widening the table to duplicate it would mean a
-            # migration for something already recorded.
-            session.execute(
-                text(
-                    "UPDATE outbox_events SET status = 'failed', attempts = :attempts"
-                    " WHERE id = :id"
-                ),
-                {"id": row.id, "attempts": attempts},
-            )
-            failed += 1
-        else:
-            session.execute(
-                text("UPDATE outbox_events SET attempts = :attempts WHERE id = :id"),
-                {"id": row.id, "attempts": attempts},
-            )
-            failed += 1
+        with transaction() as session:
+            if delivered:
+                session.execute(
+                    text(
+                        "UPDATE outbox_events SET status = 'dispatched', attempts = :attempts,"
+                        " dispatched_at = now() WHERE id = :id"
+                    ),
+                    {"id": event_id, "attempts": attempts},
+                )
+                sent += 1
+            elif attempts >= MAX_DELIVERY_ATTEMPTS:
+                # `failed` is a visible dead-letter state, not a deletion. An operator can
+                # see exactly which alerts never reached anyone. `outbox_events` carries no
+                # `last_error` column — the reason is already in the structured log from
+                # `AlertChannel.send`, and widening the table to duplicate it would mean a
+                # migration for something already recorded.
+                session.execute(
+                    text(
+                        "UPDATE outbox_events SET status = 'failed', attempts = :attempts"
+                        " WHERE id = :id"
+                    ),
+                    {"id": event_id, "attempts": attempts},
+                )
+                failed += 1
+            else:
+                session.execute(
+                    text("UPDATE outbox_events SET attempts = :attempts WHERE id = :id"),
+                    {"id": event_id, "attempts": attempts},
+                )
+                failed += 1
 
     return {"sent": sent, "failed": failed, "skipped": skipped}

@@ -518,6 +518,44 @@ def test_reprints_are_marked_duplicate_unless_the_setting_says_otherwise(
     assert service.reprint_is_duplicate(_ctx(tenant, owner), uuid.UUID(invoice["id"])) is False
 
 
+def test_build_resolves_settings_once_not_once_per_field(
+    api_client: TestClient,
+    headers: dict[str, str],
+    tenant: Tenant,
+    owner: UserFixture,
+    stocked: str,
+    migration_session: Session,
+) -> None:
+    """`build()` reads four settings (tax mode, print profile, date format, credit
+    block) — this must be one `settings` query, not four, since none of the four can
+    change mid-call. Counted at the SQL level so a future regression (someone adding a
+    fifth `.get()` call back in) is caught even if every returned value still happens
+    to be correct."""
+    from sqlalchemy import event
+
+    invoice = _sale(api_client, headers, tenant, stocked)
+    migration_session.commit()
+    service = PrintPayloadService(migration_session)
+
+    statements: list[str] = []
+
+    def _record(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+
+    engine = migration_session.get_bind()
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        payload = service.build(_ctx(tenant, owner), uuid.UUID(invoice["id"]))
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    assert payload.tax_mode  # sanity: the call still produced a real payload
+    settings_queries = [s for s in statements if "FROM settings" in s]
+    assert len(settings_queries) == 1, (
+        f"expected exactly one settings query, got {len(settings_queries)}: {settings_queries}"
+    )
+
+
 # --- drafts -------------------------------------------------------------------
 
 

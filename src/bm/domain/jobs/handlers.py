@@ -186,9 +186,9 @@ def handle_inventory_reconcile(payload: dict[str, Any]) -> None:
             )
 
     # Delivery happens after the transaction above has committed, so an HTTP timeout
-    # cannot hold a lock (`ARCHITECTURE.md §7.1`).
-    with transaction() as session:
-        notifications.dispatch_pending(session, channel)
+    # cannot hold a lock (`ARCHITECTURE.md §7.1`). `dispatch_pending` now manages its
+    # own claim/deliver/record transactions internally for the same reason.
+    notifications.dispatch_pending(channel)
 
 
 # --- idempotency.prune --------------------------------------------------------
@@ -336,8 +336,7 @@ def handle_notifications_dispatch(payload: dict[str, Any]) -> None:
     """Deliver pending outbox events (`ARCHITECTURE.md §7.1`)."""
     channel = AlertChannel(get_settings())
     limit = int(payload.get("limit") or 50)
-    with transaction() as session:
-        counts = notifications.dispatch_pending(session, channel, limit=limit)
+    counts = notifications.dispatch_pending(channel, limit=limit)
     logger.info("outbox_dispatched", extra=counts)
 
 

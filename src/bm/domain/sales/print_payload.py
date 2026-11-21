@@ -140,16 +140,19 @@ class PrintPayloadService:
             .all()
         )
 
-        tax_mode = str(self._settings.get(ctx.business_id, ctx.branch_id, SettingKey.TAX_MODE))
-        profile = str(
-            self._settings.get(ctx.business_id, ctx.branch_id, SettingKey.PRINT_PAPER_PROFILE)
-        )
-        date_format = str(
-            self._settings.get(ctx.business_id, ctx.branch_id, SettingKey.PRINT_DATE_FORMAT)
-        )
-        show_credit_block = bool(
-            self._settings.get(ctx.business_id, ctx.branch_id, SettingKey.PRINT_SHOW_CREDIT_BLOCK)
-        )
+        # One `resolve_all()` call instead of four separate `.get()` calls, each of
+        # which re-runs the same business/branch settings query from scratch. Scoped to
+        # this single method invocation only (not cached on the instance) — nothing
+        # inside `build()` can mutate a setting mid-call, so this changes no behaviour,
+        # unlike caching across separate calls to this service would (see
+        # `reprint_is_duplicate`, deliberately left as its own fresh read: a test
+        # exercises exactly that method seeing a setting change between two calls on
+        # the same service instance).
+        resolved = self._settings.resolve_all(ctx.business_id, ctx.branch_id)
+        tax_mode = str(resolved[SettingKey.TAX_MODE])
+        profile = str(resolved[SettingKey.PRINT_PAPER_PROFILE])
+        date_format = str(resolved[SettingKey.PRINT_DATE_FORMAT])
+        show_credit_block = bool(resolved[SettingKey.PRINT_SHOW_CREDIT_BLOCK])
 
         outstanding = invoice.total - invoice.amount_paid
 

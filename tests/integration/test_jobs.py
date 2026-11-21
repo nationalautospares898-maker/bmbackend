@@ -250,6 +250,93 @@ def test_an_event_becomes_failed_after_the_attempt_limit(
     )
 
 
+def test_dispatch_releases_the_claim_lock_before_calling_the_channel(
+    migration_session: Session, tenant: Tenant, owner: UserFixture, engine_bound: None
+) -> None:
+    """The HTTP delivery call must not run while the claiming `FOR UPDATE SKIP LOCKED`
+    row lock is still held — a slow or unreachable webhook would otherwise block every
+    other claimer for the length of its timeout (`ARCHITECTURE.md §7.1`). Verified with
+    a real loopback HTTP server whose handler itself probes the row's lock state from a
+    second connection, the same technique `tests/unit/test_alerting.py` uses for
+    `AlertChannel` delivery tests."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from pydantic import SecretStr
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from bm.config import Settings
+    from bm.domain.notifications import service as notifications
+    from bm.infra.alerting.channel import AlertChannel
+    from bm.infra.db.session import get_session_factory
+
+    notifications.raise_alert(
+        migration_session,
+        business_id=tenant.business_id,
+        kind="test.alert",
+        severity=handlers.Severity.CRITICAL,
+        title="t",
+        body="b",
+    )
+    migration_session.commit()
+    event_id = migration_session.execute(text("SELECT id FROM outbox_events LIMIT 1")).scalar_one()
+
+    lock_was_free: list[bool] = []
+
+    class _ProbingHandler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            probe = get_session_factory()()
+            try:
+                probe.execute(
+                    text("SELECT id FROM outbox_events WHERE id = :id FOR UPDATE NOWAIT"),
+                    {"id": event_id},
+                )
+                lock_was_free.append(True)
+            except SQLAlchemyError:
+                lock_was_free.append(False)
+            finally:
+                probe.rollback()
+                probe.close()
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args: object) -> None:  # quiet test output
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _ProbingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address[0], server.server_address[1]
+        channel = AlertChannel(
+            Settings(
+                _env_file=None,
+                env="test",
+                database_url="postgresql+psycopg://u:p@localhost:55439/bm",
+                jwt_signing_key=SecretStr("x" * 32),
+                password_pepper=SecretStr("x" * 32),
+                ip_hash_pepper=SecretStr("x" * 32),
+                alerting_enabled=True,
+                alert_webhook_url=SecretStr(f"http://{host}:{port}/hook"),
+                alert_recipient_name="Test Operator",
+            )
+        )
+        notifications.dispatch_pending(channel)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert lock_was_free == [True]
+    migration_session.commit()
+    assert (
+        str(
+            migration_session.execute(text("SELECT status FROM outbox_events LIMIT 1")).scalar_one()
+        )
+        == "dispatched"
+    )
+
+
 def test_an_event_of_another_type_is_left_for_its_own_consumer(
     migration_session: Session, tenant: Tenant, owner: UserFixture, engine_bound: None
 ) -> None:
