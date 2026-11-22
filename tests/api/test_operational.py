@@ -196,3 +196,64 @@ def test_disallowed_origin_is_not_granted_cors(client: TestClient) -> None:
         },
     )
     assert response.headers.get("access-control-allow-origin") != "https://attacker.example.com"
+
+
+def test_preflight_allows_the_headers_a_direct_browser_request_sends(
+    client: TestClient,
+) -> None:
+    """Direct browser-to-Railway routing makes CORS load-bearing for the first time.
+
+    Under the Vercel-proxy topology the browser only ever saw one origin, so a missing
+    entry here changed nothing. Once bearer traffic goes direct, every header the client
+    sets must be allow-listed or the preflight fails and the request never happens —
+    a failure that looks like an outage (curl works perfectly) rather than a config
+    error. These are exactly the headers `api/client.ts::buildHeaders` sets.
+    """
+    for header in (
+        "authorization",
+        "content-type",
+        "x-request-id",
+        "x-device-id",
+        "x-counter-id",
+        "idempotency-key",
+        "if-match",
+    ):
+        response = client.options(
+            "/api/v1/notifications",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": header,
+            },
+        )
+        allowed = (response.headers.get("access-control-allow-headers") or "").lower()
+        assert header in allowed, f"{header} would fail preflight on a direct request"
+
+
+def test_preflight_allows_every_method_the_client_uses(client: TestClient) -> None:
+    for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+        response = client.options(
+            "/api/v1/notifications",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": method,
+            },
+        )
+        allowed = (response.headers.get("access-control-allow-methods") or "").upper()
+        assert method in allowed, f"{method} would fail preflight on a direct request"
+
+
+def test_idempotent_replay_is_exposed_to_a_cross_origin_reader(client: TestClient) -> None:
+    """The subtlest way direct routing could corrupt billing.
+
+    `api/client.ts` reads `Idempotent-Replay` to tell a replayed finalisation from a new
+    one. A cross-origin reader can only see response headers named in
+    `Access-Control-Expose-Headers`; without it the header reads as `null` in the
+    browser, every replay looks like a fresh sale to the client, and the duplicate-bill
+    protection that `pendingFinalizations` exists for is silently defeated — while
+    `curl` and every server-side test still pass.
+    """
+    response = client.get("/api/v1/meta", headers={"Origin": "http://localhost:5173"})
+    exposed = (response.headers.get("access-control-expose-headers") or "").lower()
+    assert "idempotent-replay" in exposed
+    assert "x-request-id" in exposed
