@@ -262,3 +262,259 @@ What remains, and does not block this release:
    is ever required and this isn't fixed first.
 3. The Playwright e2e browser suite was not re-run this session (see "Local verification");
    the audit ran it within the last day with specific passing numbers.
+
+---
+---
+
+# Addendum — 2026-11-23: the notification request storm
+
+A second release, investigating a production request storm the owner reported the night
+of the first one. Vercel Observability showed `/api/v1/notifications` at **~2.4K requests
+in a five-minute window**, with log timestamps **~110 ms apart**, continuing while the
+owner sat on a single idle tab.
+
+**There were two independent causes.** Neither was the other's symptom, and only one of
+them was in the code that had just been deployed.
+
+---
+
+## Cause 1 — stale browser tabs running a pre-`45570db` bundle
+
+### Evidence
+
+The bundle before `45570db` had a render-feedback loop:
+
+```js
+const load = useCallback(async () => { … onNavigate?.(…) … }, [onNavigate]);
+useEffect(() => {
+  void load();                                   // immediate fetch on every re-run
+  const timer = setInterval(() => void load(), 30_000);
+}, [load]);                                      // re-runs whenever `load` changes
+```
+
+`AppShell` passes `onNavigate` as a fresh inline function on every render, and every
+successful poll fed its result back via `onItemsChanged` — so each response caused the
+re-render that tore down and immediately re-ran the effect. That commit's own message
+records the consequence: *"looping at network round-trip speed instead of once per 30s.
+This alone was capable of exceeding the Vercel Hobby plan's request budget from a single
+open tab."*
+
+Three facts tie it to what the owner observed:
+
+| Observation | Explanation |
+|---|---|
+| ~110 ms spacing | India→Singapore round trip. A loop spaced at exactly RTT is response-triggers-next-request; no timer produces that. |
+| ~2.4K / 5 min ≈ 8/s | One loop at ~110 ms. This is **one** tab, not many. |
+| Deploying the fix did not stop it | `vite.config.ts` sets `registerType: 'prompt'`, `skipWaiting: false`, `clientsClaim: false` (ADR-031). An open tab **never** adopts a new build. |
+
+### Why the deploy could not fix it, and what now does
+
+That service-worker configuration is correct — a forced reload mid-sale is worse than
+running a version behind. But it means a build that is *defective in its request
+behaviour* keeps running until somebody closes the tab.
+
+`markClientStale()` closes that gap (`bmfrontend` `a2bd0ac`). Detection already existed
+(`swUpdate.ts`'s `onNeedRefresh`, plus its 30-minute `registration.update()` nudge); what
+was missing was an off switch. On learning a newer build is waiting, a tab now clears the
+feed's timers, detaches its `visibilitychange`/`online` listeners, aborts the request in
+flight, and refuses every subsequent trigger. One `BroadcastChannel` announcement retires
+sibling tabs; where it is unavailable each tab discovers independently, so the degraded
+behaviour is *slower*, never *wrong*.
+
+**Stopping the feed is the only automatic action.** Reloading stays `applyUpdate()`,
+user-initiated, so no unsaved bill is interrupted; drafts live in IndexedDB and sessions
+are untouched. **No new timer and no version poll** — the existing service-worker signal
+is the trigger, which is what keeps the cure from becoming a second storm.
+
+### What this does NOT do, and the one action still outstanding
+
+It cannot retire a tab that is **already** running the defective bundle, because that tab
+will never execute this code. A tab storming today keeps storming until it is closed or
+its update prompt is accepted.
+
+**Owner action, still required:** close **every** tab on `bmfrontend-seven.vercel.app`
+across **all** machines — including any counter PC left open — then watch live logs for
+60 s. If `/api/v1/notifications` goes quiet, Cause 1 is confirmed and over. If it
+continues with every tab shut, this diagnosis is wrong and must be reopened. This change
+protects every *future* bad build; it cannot retroactively reach the current one.
+
+---
+
+## Cause 2 — the server hint was pinned to its 60-second floor
+
+Found by measurement, not by reading: the post-fix browser run still failed its idle
+scenarios, at exactly one request per 60 seconds.
+
+### Root cause
+
+`_fire_one` returning `False` deliberately does **not** advance `last_fired_at`, so a
+bill appearing later still gets its reminder rather than losing the slot. That is correct
+and was left alone. The consequence is that an hourly `bill_reminder` in a shop with
+nothing outstanding sits at `last_fired_at IS NULL` **forever**, and `_is_due` keeps
+calling it due on every 60-second tick.
+
+`next_due_in_seconds` then answered the wrong question. It computed *"when is this
+schedule next due to be checked"* → `0` → clamped **up** to `_HINT_FLOOR_SECONDS`. The
+client is asking *"when could a notification next exist"*. So every signed-in tab was
+told to come back in 60 seconds, permanently, and answered "nothing" each time:
+**~1,440 requests per tab per day**, each billed twice — once as a Vercel CDN request
+through the rewrite, once at Railway. The 17:00 summary had the same shape, pinning from
+17:00 until midnight on any day with nothing low.
+
+Confirmed directly against a real tenant holding zero notifications:
+
+```
+next_check_after_seconds = 60     ← before
+next_check_after_seconds = 900    ← after, same tenant, same data
+```
+
+### The fix
+
+`bmbackend` `ec34e1d`, in `next_due_in_seconds` only. An **overdue** schedule now reports
+the ceiling instead of the floor. Overdue is not imminent: the scheduler re-checks every
+60 s, so anything reportable has already been reported, and a new notification needs the
+underlying data to change first. The ceiling is the documented contract for the longest a
+scheduled notification may go undiscovered.
+
+Firing behaviour is untouched — reminders fire exactly as before. A genuinely
+*approaching* schedule still reports its real distance, so the 5 PM summary and the
+hourly reminder keep their timing; that half is asserted either side of the changed
+cases.
+
+### The two changed assertions, and why they are not a weakened test
+
+Two assertions moved `FLOOR` → `CEILING`. They encoded the defect rather than the
+requirement: `== FLOOR` is precisely the statement "tell every idle tab to come back in
+60 seconds, forever". Both were rewritten to state the corrected semantics with the
+reasoning in the docstring, and a property-style test
+(`test_an_idle_shop_is_never_told_to_come_back_at_the_floor`) now fails if floor-pinning
+for an idle shop is ever reintroduced. The net test count rose; nothing was deleted or
+skipped.
+
+---
+
+## Measured request frequency — before and after
+
+Real Chromium, real backend, counted off the wire, identical windows and tenant
+(`tests/e2e/notification-request-frequency.spec.ts`).
+
+| Scenario | Before (hint = 60) | After (hint = 900) |
+|---|---|---|
+| 1 idle active tab, 120 s | failed its `== 0` assertion | **0 requests** |
+| 2 simultaneous tabs, 120 s | failed its `<= 2` assertion | **0 requests** |
+| 5-min active session, 15 screen changes | **5 requests** | **0 requests** |
+| 30 bell open/close cycles | 1 | 1 in 6 s (floor-bounded) |
+| 20 offline/online transitions | ~6 | 6 in 17 s (floor-bounded) |
+| `cache-control` on the response | — | `no-store` |
+
+Steady state per tab: **~1,440 requests/day → ~96/day** (15×), before counting Cause 1.
+
+---
+
+## Tests
+
+| Suite | Result |
+|---|---|
+| Backend `pytest`, full suite, real PostgreSQL | **all passed, 0 failures** |
+| `ruff check` · `ruff format --check` · `mypy src/` | clean, 132 source files |
+| Frontend `vitest run` | **871 passed** (43 files; was 866, +5 new) |
+| `tsc -b --force` · `eslint .` · `prettier --check .` | clean |
+| Browser `notification-request-frequency.spec.ts` | **6 passed** (10.5 min) |
+
+New coverage: 5 version-enforcement tests (every trigger refused after retirement,
+idempotence, no publish of a payload arriving after retirement, no resurrection by a new
+subscriber, clean reset), plus the hint regression tests above.
+
+### A process note, recorded because it nearly produced a false alarm
+
+Midway through, a targeted `pytest` was run against `bm_test` while the full suite was
+already running against it. The suite truncates tables between tests, so the resulting
+login-500s and foreign-key violations looked like a regression in the fix and were
+neither — they were two concurrent runs sharing one database. The suite was re-run
+serially and is clean. Recorded so the transcript is not mistaken for evidence of a
+defect.
+
+---
+
+## Deployment
+
+| | Backend | Frontend |
+|---|---|---|
+| Commit | `ec34e1d` | `a2bd0ac` |
+| Previous | `76739fe` | `2b56135` |
+| CI | **green — all 7 jobs**, run `45062812588` | **green**, run `45061734979` |
+| Deployed | **not confirmed** — see below | **confirmed**: bundle `index-BVBS2ewE` → `index-rNu2eFgC` |
+
+Backend CI jobs on `ec34e1d`, each verified individually: Tests (real PostgreSQL),
+Performance, Migrations upgrade/downgrade, fresh-clone import, Dependency audit, Lint /
+types / module boundaries, Secret scan — all `success`.
+
+### ⚠️ The Railway deployment of `ec34e1d` is NOT verified
+
+`/readyz` still reports `scheduler.started_at = 2026-11-22T19:48:33Z`, which predates the
+`ec34e1d` push, and it had not changed ~25 minutes later. The service is healthy
+(`status: ready`, migrations `0029`, scheduler running, holds the lock, zero failures) —
+but healthy **on the previous build**.
+
+I could not establish which commit is live. `BM_RELEASE` is reported by
+`GET /api/v1/meta`, which requires authentication, and no unauthenticated endpoint
+exposes the deployed SHA. There is no Railway CLI or token in this environment.
+
+**So the backend half of this fix may not yet be serving production traffic.** Two things
+to check, both needing owner access:
+
+1. Railway dashboard → has a deployment for `ec34e1d` run? Earlier commits in this
+   release did auto-deploy, so a delay is more likely than a failure, but that is an
+   assumption, not evidence.
+2. Once deployed, confirm the fix is live by signing in and reading
+   `next_check_after_seconds` on `GET /api/v1/notifications`. **900 means the fix is
+   serving; 60 means it is not.** That single number is the whole verification.
+
+Until then, Cause 2 is **fixed, merged and CI-verified, but not confirmed in
+production**. The frontend half (`a2bd0ac`) *is* confirmed live.
+
+Deployed-bundle verification, fetched from the live origin rather than assumed:
+
+```
+bm-client-stale    x1     ← version enforcement is live
+BroadcastChannel   x4     ← cross-tab coordination is live
+/api/v1            x1     ← relative routing unchanged
+```
+
+**Routing is unchanged and `VITE_API_BASE_URL` was not reintroduced**, as required.
+
+---
+
+## Routing analysis (requested; analysis only, nothing changed)
+
+| | Current: relative `/api/v1` via Vercel rewrite | Alternative: direct to Railway |
+|---|---|---|
+| Vercel CDN requests | Every API call is billed | ~0 |
+| Railway requests | Same either way | Same |
+| Cookies | Same-origin; `SameSite=lax` works | `*.vercel.app` and `*.up.railway.app` are both public suffixes, so this is **cross-site** and needs `SameSite=none` |
+| CORS | Not involved | Required, with `allow_credentials=True` |
+| Session persistence | Intact | Exactly the configuration that produced the **13-minute logout** |
+
+**Recommendation: keep the current routing.** The CDN saving was the only argument for
+switching, and Cause 2's fix already delivers 15x of it without touching cookies. Paying
+for the remainder by returning to the cross-site cookie topology — the one that signed
+cashiers out mid-bill — is a bad trade. Revisit only alongside a custom domain
+(topology A), where `lax` still works.
+
+---
+
+## Outstanding risks and owner actions
+
+1. **Close every tab on the origin, on every machine.** This is the only thing that stops
+   a *currently* storming tab; nothing deployable can reach it.
+2. **Confirm the storm stopped** by watching live logs for 60 s afterwards. If it did
+   not, the Cause 1 diagnosis is wrong and should be reopened.
+3. **Attribution remains unproven.** The backend request log (`api/middleware.py`) records
+   `method`, `route`, `status` and `duration_ms` and nothing identifying — no device id,
+   no business id, no client IP. So "one client or several" **cannot be established from
+   existing logs**; the one-tab conclusion is inferred from rate arithmetic and RTT
+   spacing. Making it provable needs `X-Device-Id` on that log line (a random UUID, not
+   PII) — proposed, not implemented, since it is an observability change rather than part
+   of this fix.
+4. The **`refresh_cookie` / `cross_site_cookie_blocked`** item from the main report is
+   unchanged and still needs one authenticated browser check.
