@@ -277,6 +277,19 @@ def enqueue_due(last_enqueued: dict[str, float], now_monotonic: float) -> list[s
     exists per interval per kind and a restart inside the current bucket cannot enqueue
     a second row.
 
+    A kind this process has never enqueued is always due, whatever `now_monotonic` is —
+    `time.monotonic()`'s reference point is undefined (it is commonly host uptime, not
+    process start), so a freshly booted machine can return a value smaller than a kind's
+    own interval. Anchoring "never enqueued" to `0.0` made that case silently wait out a
+    full interval before ever running it once: harmless for the 60-second kinds (almost
+    any host has more than 60 seconds of monotonic time by the first tick), but it meant
+    `low_stock.scan`'s 86 400-second interval would not run on first boot unless the host
+    already happened to have a day of monotonic uptime behind it — true by accident on a
+    long-lived machine, false by construction on a fresh CI runner. `float("-inf")` makes
+    "always due the first time" explicit rather than a coincidence of host uptime; the
+    per-interval `dedupe_key` bucket above is what still stops two processes, or a
+    restart within the same bucket, from enqueueing it twice.
+
     Separated from the loop so a test can drive it with an explicit clock.
     """
     from bm.infra.queue.runner import HANDLERS
@@ -287,7 +300,7 @@ def enqueue_due(last_enqueued: dict[str, float], now_monotonic: float) -> list[s
         if kind not in HANDLERS:
             # No handler registered in this process: enqueueing would dead-letter.
             continue
-        if now_monotonic < last_enqueued.get(kind, 0.0) + interval:
+        if now_monotonic < last_enqueued.get(kind, float("-inf")) + interval:
             continue
         last_enqueued[kind] = now_monotonic
         bucket = int(epoch // interval)

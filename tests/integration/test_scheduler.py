@@ -131,6 +131,44 @@ def test_a_restart_inside_the_current_bucket_cannot_enqueue_a_duplicate(
         )
 
 
+def test_a_kind_is_due_immediately_even_on_a_freshly_booted_clock(
+    migration_session: Session, engine_bound: None, handlers_registered: None
+) -> None:
+    """`time.monotonic()`'s reference point is undefined — a freshly booted CI runner can
+    return a value far smaller than `low_stock.scan`'s 86 400-second interval. The first
+    enqueue for a kind this process has never seen must not depend on the clock already
+    having accumulated a day of uptime by accident; it must be due regardless."""
+    last: dict[str, float] = {}
+    enqueued = sched.enqueue_due(last, now_monotonic=1.0)
+
+    assert set(enqueued) == set(sched.SCHEDULES), (
+        "a kind was skipped on first enqueue because the monotonic clock started small "
+        "— this is the bug where low_stock.scan never ran on a freshly booted host"
+    )
+    for kind in sched.SCHEDULES:
+        assert _queued(migration_session, kind) == 1, kind
+
+
+def test_a_kind_stays_not_due_until_its_own_interval_elapses_from_a_small_start(
+    migration_session: Session, engine_bound: None, handlers_registered: None
+) -> None:
+    """Same near-zero starting clock as above, but now checking the *other* direction:
+    once a kind has a recorded `last_enqueued`, it must still respect its own interval
+    rather than being due on every call just because the clock is small."""
+    last: dict[str, float] = {}
+    sched.enqueue_due(last, now_monotonic=1.0)
+
+    # 31 seconds later: short of every interval, including the 60-second kinds.
+    again = sched.enqueue_due(last, now_monotonic=32.0)
+    assert again == []
+
+    # 61 seconds after the first enqueue: the 60-second kinds are due again, the daily
+    # reconciliation is not.
+    later = sched.enqueue_due(last, now_monotonic=62.0)
+    assert set(later) == {"reminders.check_schedules", "orders.nudge"}
+    assert "low_stock.scan" not in later
+
+
 def test_a_kind_with_no_registered_handler_is_never_enqueued(
     migration_session: Session, engine_bound: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
