@@ -71,23 +71,31 @@ class ProductView:
 
     @property
     def is_low_stock(self) -> bool:
-        """**Strictly below** the product's own minimum (FR-INV-008).
+        """**At or below** the product's own minimum (FR-INV-008).
 
-        `<`, not `<=`: the owner's rule is that an item is low once it "goes below the
-        minimum quantity", so a part with a minimum of 4 and 4 on the shelf is at its
-        minimum, not under it.
+        ⚠️ **`<=`, changed from `<` on 2026-11-22 by owner decision.** A part with a
+        minimum of 10 and 10 on the shelf **is** low: `reorder_level` means *reorder when
+        you reach this*, so reaching it is the moment that matters.
 
-        ⚠️ `LOW_STOCK_AFTER_SALE` deliberately uses `<=` instead
-        (`sales/service.py::_low_stock_warnings`). That warning is documented as firing
-        when stock "fell **to or** below `reorder_level`"
-        (`docs/API-SPECIFICATION.md §4.3`) and is a published contract with its own
-        registered warning code. The two are different questions — *"reorder this soon"*
-        after a sale, versus *"this is short right now"* on the Stock screen — and
-        unifying them would silently change a documented response.
+        This is now the **only** low-stock rule in the application. It was previously one
+        of two — the listing surfaces used `<` and the post-sale warning and the
+        notification producers used `<=`, so the Stock screen and the bell could disagree
+        about the same part. Every comparison now reads `<=`:
+
+        * here (the product badge),
+        * `InventoryService.balances(low_stock_only=True)` (the Stock screen's filter),
+        * `ReportService.stock_position` (the stock report),
+        * `domain/notifications/low_stock.py` (both notification entry points),
+        * `SalesService._low_stock_warnings` (`LOW_STOCK_AFTER_SALE`, unchanged — it was
+          always `<=`),
+        * `bmfrontend/src/features/stock/lowStock.ts` (the client-side badge).
+
+        Do not reintroduce a second rule. If the threshold is ever revisited, it moves in
+        all six places together.
         """
         if self.branch_quantity is None or self.reorder_level is None:
             return False
-        return self.branch_quantity < self.reorder_level
+        return self.branch_quantity <= self.reorder_level
 
 
 class CatalogService:

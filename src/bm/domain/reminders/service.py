@@ -242,6 +242,38 @@ def _is_due(
     return _business_today(business_timezone, last_fired_at) < local_now.date()
 
 
+def _resolve_previous(session: Session, business_id: uuid.UUID, row: object) -> None:
+    """Close whatever this schedule's last firing left open.
+
+    Called on both paths, which is the point. Firing calls it to supersede the previous
+    reminder so the bell holds one current notice per schedule rather than a pile. The
+    *nothing-to-report* path calls it because the previous notice has become **false**:
+    a reminder reading "3 credit bill(s) still pending" must not sit in the bell after
+    the last of those bills has been paid, and "4 item(s) running low" must not survive
+    the restock that fixed it (owner request, 2026-11-22).
+
+    `resolved`, not `dismissed`: the condition the reminder described genuinely went
+    away, which is exactly the distinction `NotificationStatus` exists to keep — and
+    only application code that observed the fix may use it.
+    """
+    kind = str(row.kind)  # type: ignore[attr-defined]
+    notifications.resolve_for_entity(
+        session,
+        business_id=business_id,
+        kind=_notification_kind_for(kind),
+        entity_id=row.id,  # type: ignore[attr-defined]
+    )
+
+
+def _notification_kind_for(schedule_kind: str) -> NotificationKind:
+    """`reminder_schedules.kind` and `NotificationKind` are not the same vocabulary —
+    `'custom'` (a schedule kind) is `CUSTOM_REMINDER` (a notification kind); the
+    built-in two happen to share their spelling, which is a coincidence, not a rule."""
+    if schedule_kind == "custom":
+        return NotificationKind.CUSTOM_REMINDER
+    return NotificationKind(schedule_kind)
+
+
 def _fire_one(session: Session, business_id: uuid.UUID, row: object) -> bool:
     """Returns whether a notification was actually raised.
 
@@ -249,6 +281,11 @@ def _fire_one(session: Session, business_id: uuid.UUID, row: object) -> bool:
     day's firing slot — `check_and_fire` only advances `last_fired_at` when this
     returns `True`, so a bill that appears later the same day still gets its reminder
     on the next tick rather than being silently skipped until tomorrow.
+
+    It does, however, **resolve** the previous firing's notification on the way out —
+    see `_resolve_previous`. Returning `False` means "there is nothing to report", and
+    leaving last hour's claim that there was something standing in the bell would make
+    this reminder lie for as long as nobody dismissed it.
     """
     schedule_id = row.id  # type: ignore[attr-defined]
     kind = str(row.kind)  # type: ignore[attr-defined]
@@ -270,22 +307,26 @@ def _fire_one(session: Session, business_id: uuid.UUID, row: object) -> bool:
         ).one()
         count, total = outstanding
         if not count:
+            # Every credit bill is settled (or cancelled). `payment_status` is derived
+            # from the allocations in the same transaction as the payment, so this is
+            # the authoritative answer — there is no separate "mark paid" to miss.
+            _resolve_previous(session, business_id, row)
             return False
         title = f"{count} credit bill(s) still pending"
         body = f"₹{total} outstanding across {count} bill(s)."
         severity = NotificationSeverity.WARNING
     elif kind == "stock_reminder":
-        from bm.domain.notifications.low_stock import scan_business
+        from bm.domain.notifications.low_stock import active_low_stock_count, scan_business
 
+        # Reconcile first, then count. Low-stock alerts are now raised the moment a
+        # balance crosses its minimum (`InventoryService.apply_movements`), so this scan
+        # is a safety net rather than the detector — but running it here means the 5 PM
+        # summary's number is reconciled at the moment it is reported, and cannot claim
+        # a count that the bell beside it would contradict.
         scan_business(session, business_id)
-        low_count = session.execute(
-            text(
-                "SELECT count(*) FROM notifications"
-                " WHERE business_id = :business_id AND kind = 'low_stock' AND status = 'active'"
-            ),
-            {"business_id": business_id},
-        ).scalar_one()
+        low_count = active_low_stock_count(session, business_id)
         if not low_count:
+            _resolve_previous(session, business_id, row)
             return False
         title = f"{low_count} item(s) running low"
         body = "See Stock for the full list."
@@ -295,21 +336,11 @@ def _fire_one(session: Session, business_id: uuid.UUID, row: object) -> bool:
         body = None
         severity = NotificationSeverity.INFO
 
-    # `reminder_schedules.kind` and `NotificationKind` are not the same vocabulary —
-    # `'custom'` (a schedule kind) is `CUSTOM_REMINDER` (a notification kind); the
-    # built-in two happen to share their spelling, which is a coincidence, not a rule.
-    notification_kind = (
-        NotificationKind.CUSTOM_REMINDER if kind == "custom" else NotificationKind(kind)
-    )
+    notification_kind = _notification_kind_for(kind)
 
     # Supersede whatever this schedule's previous firing left open, so the bell holds
     # one current reminder per schedule rather than an accumulating pile.
-    notifications.resolve_for_entity(
-        session,
-        business_id=business_id,
-        kind=notification_kind,
-        entity_id=schedule_id,
-    )
+    _resolve_previous(session, business_id, row)
     notifications.notify(
         session,
         business_id=business_id,
@@ -321,6 +352,105 @@ def _fire_one(session: Session, business_id: uuid.UUID, row: object) -> bool:
         entity_id=schedule_id,
     )
     return True
+
+
+#: Clamp for the hint `next_due_in_seconds` returns.
+#:
+#: The floor stops a schedule that is already overdue (because the scheduler is behind,
+#: or a reminder returned "nothing to report" and kept its slot) from telling the client
+#: to come back immediately, over and over. The ceiling bounds how stale the hint itself
+#: can be: an owner can enable, disable or delete a reminder at any moment, and a client
+#: that had been told to sleep for six hours would not notice.
+_HINT_FLOOR_SECONDS = 60
+_HINT_CEILING_SECONDS = 15 * 60
+
+
+def next_due_in_seconds(
+    session: Session, business_id: uuid.UUID, business_timezone: str, now_utc: datetime
+) -> int:
+    """How long until this business's next *scheduled* notification could be created.
+
+    The client uses this to decide when to look again (`notificationsPoller.ts`), which
+    is what replaced the unconditional 30-second poll. The authority on "when is a
+    reminder due" is the firing logic itself, so this is computed from the same
+    `reminder_schedules` rows and the same `_is_due` arithmetic rather than from a
+    cadence written down twice — a client with its own copy of "hourly" would drift the
+    moment the owner changed a schedule.
+
+    Covers both scheduled producers:
+
+    * every enabled `reminder_schedules` row (the hourly credit reminder, the 5 PM stock
+      summary, any custom reminder);
+    * the hourly pending-order nudge, whose next firing is the soonest of each pending
+      order's own `remind_at` or `last_reminder_at + NUDGE_INTERVAL_MINUTES`.
+
+    Immediate notifications — a saved order, a stock movement crossing its minimum — are
+    deliberately *not* represented. They are created by a request the user just made, and
+    the client refreshes on its own interactions anyway.
+
+    Clamped to `[_HINT_FLOOR_SECONDS, _HINT_CEILING_SECONDS]`.
+    """
+    from bm.domain.orders.service import NUDGE_INTERVAL_MINUTES
+
+    soonest: float | None = None
+
+    def consider(seconds: float) -> None:
+        nonlocal soonest
+        if soonest is None or seconds < soonest:
+            soonest = seconds
+
+    rows = session.execute(
+        text(
+            "SELECT fire_time, interval_hours, last_fired_at"
+            " FROM reminder_schedules WHERE business_id = :business_id AND enabled = true"
+        ),
+        {"business_id": business_id},
+    ).all()
+    for row in rows:
+        if row.interval_hours is not None:
+            if row.last_fired_at is None:
+                consider(0.0)
+            else:
+                due_at = row.last_fired_at + timedelta(hours=row.interval_hours)
+                consider((due_at - now_utc).total_seconds())
+            continue
+        # A `fire_time` schedule: due at that business-local time today if it has not
+        # fired today, otherwise at the same time tomorrow.
+        local_now = now_utc.astimezone(ZoneInfo(business_timezone))
+        fired_today = (
+            row.last_fired_at is not None
+            and _business_today(business_timezone, row.last_fired_at) >= local_now.date()
+        )
+        target_date = local_now.date() + timedelta(days=1) if fired_today else local_now.date()
+        due_local = datetime.combine(target_date, row.fire_time, tzinfo=local_now.tzinfo)
+        if due_local < local_now and not fired_today:
+            # Past today's time and not yet fired — due now (the scheduler is simply
+            # between ticks, or the reminder had nothing to report last time).
+            consider(0.0)
+        else:
+            consider((due_local - local_now).total_seconds())
+
+    nudge_due = session.execute(
+        text(
+            """
+            SELECT min(
+                     LEAST(
+                       coalesce(remind_at, 'infinity'::timestamptz),
+                       coalesce(last_reminder_at, :now) + make_interval(mins => :cadence)
+                     )
+                   )
+              FROM orders
+             WHERE business_id = :business_id AND status = 'pending'
+            """
+        ),
+        {"business_id": business_id, "now": now_utc, "cadence": NUDGE_INTERVAL_MINUTES},
+    ).scalar()
+    if nudge_due is not None:
+        consider((nudge_due - now_utc).total_seconds())
+
+    if soonest is None:
+        return _HINT_CEILING_SECONDS
+    return int(max(_HINT_FLOOR_SECONDS, min(_HINT_CEILING_SECONDS, soonest)))
 
 
 def check_and_fire(

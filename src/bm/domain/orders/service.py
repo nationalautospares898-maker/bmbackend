@@ -31,8 +31,18 @@ from bm.infra.db.enums import NotificationKind, NotificationSeverity
 from bm.infra.db.models.infra import Order
 from bm.infra.db.rows import rows_affected
 
-#: How often a pending order resurfaces if left unattended (owner request).
-NUDGE_INTERVAL_MINUTES = 10
+#: How often a pending order resurfaces if left unattended.
+#:
+#: **Hourly since 2026-11-22** (owner request). It was ten minutes, which for an order
+#: the owner had already seen and deliberately left pending meant the bell re-raised the
+#: same note six times an hour. An hour matches the cadence the pending-credit-bill
+#: reminder already uses, so the two "you still have something outstanding" reminders now
+#: behave the same way.
+#:
+#: This is the *re-surfacing* cadence, not the check frequency: `orders.nudge` is still
+#: enqueued every 60 s (`infra/queue/scheduler.py`) so that a one-time per-order
+#: `remind_at` lands on the minute the owner asked for rather than up to an hour late.
+NUDGE_INTERVAL_MINUTES = 60
 
 
 @dataclass(frozen=True, slots=True)

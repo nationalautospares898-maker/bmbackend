@@ -535,15 +535,21 @@ def test_a_balance_row_carries_the_price_and_part_code_the_stock_screen_shows(
     [
         ("4", "10", True),  # under the minimum
         ("9", "10", True),  # still under
-        # The boundary. **Exactly at** the minimum is NOT low: the owner's rule is "goes
-        # below the minimum quantity", so 10 of a part whose minimum is 10 is at its
-        # threshold, not under it. This is the case the `<=`/`<` choice turns on, which is
-        # why it is asserted rather than left to the two obvious cases either side.
-        ("10", "10", False),
+        # The boundary, and the case the whole `<=`/`<` question turns on.
+        #
+        # ⚠️ **Exactly at the minimum IS low**, changed from `False` on 2026-11-22 by
+        # owner decision: `reorder_level` means *reorder when you reach this*. Before
+        # that, the listing surfaces said `False` here while the notification producers
+        # and the post-sale warning said `True` — so a part sold down to exactly its
+        # minimum raised a bell alert that the Stock screen refused to show, and the next
+        # reconciliation then resolved it. One rule now, asserted here.
+        ("10", "10", True),
         ("11", "10", False),  # above
+        ("10.001", "10.000", False),  # a hair above, on the quantity scale
+        ("10.000", "10.000", True),  # equal at full precision
     ],
 )
-def test_low_stock_is_strictly_below_the_products_own_minimum(
+def test_low_stock_is_at_or_below_the_products_own_minimum(
     service: InventoryService,
     tenant: Tenant,
     product: uuid.UUID,

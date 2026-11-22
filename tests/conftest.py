@@ -253,6 +253,16 @@ def api_settings() -> Settings:
         enable_api_docs=False,
         access_token_ttl_seconds=900,
         refresh_token_ttl_days=30,
+        # The API now runs the recurring-job scheduler in-process (owner request,
+        # 2026-11-22). It must be off here: a background loop enqueueing jobs and firing
+        # reminders against the same database the test is asserting on would make every
+        # API test racy, and `clean_db` truncating tables underneath a running handler
+        # would fail in ways that have nothing to do with the test.
+        #
+        # The scheduler's own behaviour is tested directly in
+        # `tests/integration/test_scheduler.py`, which drives it explicitly rather than
+        # relying on it having started by accident.
+        scheduler_enabled=False,
     )
 
 

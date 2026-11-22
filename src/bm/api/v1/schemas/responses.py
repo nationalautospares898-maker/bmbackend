@@ -1029,6 +1029,13 @@ class NotificationOut(Out):
 
 class NotificationListOut(Out):
     notifications: list[NotificationOut]
+    #: How many seconds the client should wait before looking again, because that is
+    #: when the next *scheduled* notification for this business could exist. The server
+    #: owns the schedules, so it answers the question rather than the client guessing a
+    #: fixed interval — this is what replaced the unconditional 30-second poll
+    #: (owner request, 2026-11-22). Bounded to 60…900 seconds by
+    #: `reminders.next_due_in_seconds`.
+    next_check_after_seconds: int
 
 
 class LifecycleStatusOut(Out):

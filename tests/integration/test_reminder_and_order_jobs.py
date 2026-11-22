@@ -283,7 +283,7 @@ def test_a_product_with_no_reorder_level_is_never_flagged(
 # --- orders.nudge ------------------------------------------------------------------
 
 
-def test_a_fresh_pending_order_is_nudged_immediately_and_not_twice_within_ten_minutes(
+def test_a_fresh_pending_order_is_nudged_immediately_and_not_twice_within_the_cadence(
     migration_session: Session, tenant: Tenant, owner: UserFixture, engine_bound: None
 ) -> None:
     from bm.domain.auth.permissions import permissions_for_role
@@ -683,3 +683,132 @@ def test_a_fully_paid_credit_bill_stops_being_pending_and_the_reminder_goes_quie
     )
     migration_session.commit()
     assert fired_after_paid == 0, "a fully-paid credit bill must not be pending"
+
+
+def test_paying_off_every_credit_bill_clears_the_standing_reminder(
+    api_client: TestClient,
+    headers: dict[str, str],
+    migration_session: Session,
+    tenant: Tenant,
+    owner: UserFixture,
+    engine_bound: None,
+    credit_sale_product: str,
+) -> None:
+    """Owner request, 2026-11-22.
+
+    `test_a_fully_paid_credit_bill_stops_being_pending_and_the_reminder_goes_quiet`
+    proves no *new* reminder fires once everything is paid. That left the previous one —
+    "1 credit bill(s) still pending" — sitting in the bell as a standing, false claim
+    until somebody dismissed it by hand. Going quiet is not the same as going away.
+    """
+    from decimal import Decimal
+
+    from bm.domain.reminders import service as reminders
+
+    reminders.ensure_defaults(migration_session, tenant.business_id)
+    migration_session.commit()
+    invoice = _credit_sale(api_client, headers, tenant, credit_sale_product)
+    migration_session.commit()
+
+    now = datetime.now(UTC)
+    assert reminders.check_and_fire(migration_session, tenant.business_id, "Asia/Kolkata", now) == 1
+    migration_session.commit()
+
+    open_before = migration_session.execute(
+        text(
+            "SELECT count(*) FROM notifications WHERE business_id = :b"
+            " AND kind = 'bill_reminder' AND status = 'active'"
+        ),
+        {"b": tenant.business_id},
+    ).scalar_one()
+    assert open_before == 1, "the hourly reminder should be showing"
+
+    paid = api_client.post(
+        "/api/v1/payments",
+        headers={**headers, **_key()},
+        json={
+            "customer_id": invoice["customer"]["id"],
+            "amount": str(Decimal(invoice["total"])),
+            "method": "cash",
+        },
+    )
+    assert paid.status_code == 200, paid.text
+
+    reminders.check_and_fire(
+        migration_session, tenant.business_id, "Asia/Kolkata", now + timedelta(hours=1, minutes=1)
+    )
+    migration_session.commit()
+
+    still_open = migration_session.execute(
+        text(
+            "SELECT count(*) FROM notifications WHERE business_id = :b"
+            " AND kind = 'bill_reminder' AND status = 'active'"
+        ),
+        {"b": tenant.business_id},
+    ).scalar_one()
+    assert still_open == 0, "a settled bill left a reminder claiming it is still pending"
+
+    resolved = migration_session.execute(
+        text(
+            "SELECT status FROM notifications WHERE business_id = :b AND kind = 'bill_reminder'"
+            " ORDER BY created_at DESC LIMIT 1"
+        ),
+        {"b": tenant.business_id},
+    ).scalar_one()
+    # `resolved`, not `dismissed`: the condition genuinely went away.
+    assert resolved == "resolved"
+
+
+def test_restocking_everything_clears_the_standing_stock_summary(
+    api_client: TestClient,
+    headers: dict[str, str],
+    migration_session: Session,
+    tenant: Tenant,
+    owner: UserFixture,
+    engine_bound: None,
+) -> None:
+    """The same rule for the 5 PM summary: "4 item(s) running low" must not survive the
+    restock that fixed it."""
+    from bm.domain.reminders import service as reminders
+
+    product_id = _product(migration_session, tenant, reorder_level="5.000")
+    _balance(migration_session, tenant, product_id, "1.000")
+    reminders.ensure_defaults(migration_session, tenant.business_id)
+    migration_session.commit()
+
+    # 18:00 Asia/Kolkata — past the 17:00 fire time.
+    evening = datetime(2026, 11, 22, 12, 30, tzinfo=UTC)
+    reminders.check_and_fire(migration_session, tenant.business_id, "Asia/Kolkata", evening)
+    migration_session.commit()
+    assert (
+        migration_session.execute(
+            text(
+                "SELECT count(*) FROM notifications WHERE business_id = :b"
+                " AND kind = 'stock_reminder' AND status = 'active'"
+            ),
+            {"b": tenant.business_id},
+        ).scalar_one()
+        == 1
+    )
+
+    # Restocked well above the minimum, and a day later the reminder is due again.
+    migration_session.execute(
+        text("UPDATE inventory_balances SET quantity = 50 WHERE product_id = :p"),
+        {"p": product_id},
+    )
+    migration_session.commit()
+    reminders.check_and_fire(
+        migration_session, tenant.business_id, "Asia/Kolkata", evening + timedelta(days=1)
+    )
+    migration_session.commit()
+
+    assert (
+        migration_session.execute(
+            text(
+                "SELECT count(*) FROM notifications WHERE business_id = :b"
+                " AND kind = 'stock_reminder' AND status = 'active'"
+            ),
+            {"b": tenant.business_id},
+        ).scalar_one()
+        == 0
+    ), "a restocked shop left a summary claiming items are running low"

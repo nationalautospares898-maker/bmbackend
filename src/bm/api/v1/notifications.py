@@ -26,6 +26,7 @@ from bm.api.deps import (
 from bm.api.v1.schemas.responses import AlertingStatusOut, LifecycleStatusOut, NotificationListOut
 from bm.domain.auth.permissions import Permission
 from bm.domain.notifications import service as notifications
+from bm.domain.reminders import service as reminders
 from bm.domain.shared.errors import NotFound
 from bm.infra.alerting.channel import AlertChannel
 
@@ -43,9 +44,20 @@ def list_notifications(
     No specific permission: these are notices about the business the caller is already
     signed in to, and gating "stock has run out" behind a reports permission would mean
     the person at the counter is the one person who cannot be told.
+
+    `next_check_after_seconds` is what let the client stop polling every 30 seconds
+    (owner request, 2026-11-22). The server already knows when the next scheduled
+    notification is due — it owns the schedules — so it says so, and the client sleeps
+    exactly that long instead of guessing a fixed interval. Computed by
+    `reminders.next_due_in_seconds`, which derives it from the same `reminder_schedules`
+    rows the firing logic reads, so there is no cadence written down in two places.
     """
     items = notifications.active_for(ctx, session, limit=limit)
+    next_check = reminders.next_due_in_seconds(
+        session, ctx.business_id, ctx.business_timezone, datetime.now(UTC)
+    )
     return {
+        "next_check_after_seconds": next_check,
         "notifications": [
             {
                 "id": str(n.id),
@@ -60,7 +72,7 @@ def list_notifications(
                 "read_at": n.read_at,
             }
             for n in items
-        ]
+        ],
     }
 
 

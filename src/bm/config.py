@@ -144,6 +144,20 @@ class Settings(BaseSettings):
     # --- worker ---------------------------------------------------------------
     worker_concurrency: int = Field(default=2, ge=1, le=32)
 
+    # --- scheduler ------------------------------------------------------------
+    #
+    # Whether this process runs the recurring-job scheduler in-process
+    # (`infra/queue/scheduler.py`). **On by default**, because the separate worker
+    # service was removed (owner request, 2026-11-22) and a deployment that quietly ran
+    # neither is exactly the silent failure that change exists to prevent.
+    #
+    # Turned off only where a process must not do background work: the pytest suite
+    # (pinned in `tests/conftest.py`'s `api_settings`), and a hypothetical replica
+    # dedicated to serving requests. Note that turning it off does not merely stop
+    # scheduling — nothing in that process drains the job queue either, so uploaded
+    # import files are never parsed. The startup log says so.
+    scheduler_enabled: bool = True
+
     # --- alerting (OD-19) -----------------------------------------------------
     #
     # The **recipient is configuration, never a default**. OD-19 is still open and says

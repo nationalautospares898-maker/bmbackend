@@ -38,7 +38,6 @@ from bm.domain.auth.permissions import Permission
 from bm.domain.catalog.service import CatalogService
 from bm.domain.customers.service import CustomerService
 from bm.domain.inventory.service import InventoryService, MovementRequest
-from bm.domain.notifications import service as notifications
 from bm.domain.sales.drafts import DraftService
 from bm.domain.sales.numbering import NumberingService
 from bm.domain.settings.defaults import SettingKey
@@ -76,8 +75,6 @@ from bm.infra.db.enums import (
     DocumentKind,
     DraftStatus,
     MovementReason,
-    NotificationKind,
-    NotificationSeverity,
     PaymentStatus,
     PriceSource,
 )
@@ -741,17 +738,21 @@ class SalesService:
     ) -> list[dict[str, object]]:
         """Rides along with the **successful** sale. Never a reason to retry (§4.3).
 
-        ⚠️ `<=` here is deliberate and is **not** the Stock screen's rule.
-        `LOW_STOCK_AFTER_SALE` is documented as firing when stock "fell **to or** below
-        `reorder_level`" (`docs/API-SPECIFICATION.md §4.3`), so a part that has just
-        landed exactly on its minimum warns — which is the useful moment to say "reorder
-        this". The low-stock *listing* asks a different question, "what is short right
-        now", and uses `<` (`InventoryService.balances`,
-        `CatalogService.ProductView.is_low_stock`, `ReportService.stock_position`).
+        `<=` — "fell **to or** below `reorder_level`" (`docs/API-SPECIFICATION.md §4.3`),
+        so a part that has just landed exactly on its minimum warns, which is the useful
+        moment to say "reorder this".
 
-        Do not "fix" the inconsistency by aligning this to `<`: that would change a
-        published response shape's trigger condition. If the owner wants the two
-        unified, it is an API contract change with its own decision record.
+        This was once the **only** `<=` in the application and had a long comment
+        defending itself against the listing surfaces' `<`. That split is gone: the owner
+        settled the threshold on 2026-11-22 and every low-stock comparison now reads
+        `<=`. The authority is `CatalogService.ProductView.is_low_stock`'s docstring,
+        which lists all six implementations.
+
+        **This method no longer raises the notification** (owner request, 2026-11-22) —
+        only the response warning, which is what it is for. The notification now comes
+        from `InventoryService.apply_movements`, the one writer every stock-moving route
+        passes through, so all eight of them raise it on the same rule instead of this
+        one call site raising it on its own.
         """
         low: list[dict[str, str]] = []
         for line in resolved:
@@ -765,34 +766,6 @@ class SalesService:
                         "name": line.name,
                         "quantity": format(remaining, "f"),
                     }
-                )
-                # Persist this immediately, in the same transaction as the sale, rather
-                # than leaving it to wait for the periodic `low_stock.scan_business`
-                # scan (NAS-NEW-03: the inline warning this rode along with on the
-                # finalize response is being removed from the screen, and the owner
-                # must not lose the alert along with the screen). Reuses the exact
-                # same `NotificationKind.LOW_STOCK` kind/entity as that scan so the two
-                # dedup against each other rather than ever doubling up — this call's
-                # `<=` is deliberately its own threshold (see the docstring above) and
-                # is not meant to become the scan's `<`; each still computes its own.
-                notifications.notify_once(
-                    self._session,
-                    business_id=ctx.business_id,
-                    kind=NotificationKind.LOW_STOCK,
-                    severity=(
-                        NotificationSeverity.CRITICAL
-                        if remaining <= 0
-                        else NotificationSeverity.WARNING
-                    ),
-                    title=f"{line.name} is running low",
-                    body=(
-                        f"{format(remaining, 'f')} left, below the minimum of "
-                        f"{format(line.reorder_level, 'f')}."
-                        if remaining > 0
-                        else f"Out of stock (minimum is {format(line.reorder_level, 'f')})."
-                    ),
-                    entity_type="product",
-                    entity_id=line.product_id,
                 )
         if not low:
             return []

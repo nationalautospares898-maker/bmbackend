@@ -10521,7 +10521,7 @@
           "notifications"
         ],
         "summary": "List Notifications",
-        "description": "The caller's business's active notices \u2014 Feature A.1/A.2.\n\nNo specific permission: these are notices about the business the caller is already\nsigned in to, and gating \"stock has run out\" behind a reports permission would mean\nthe person at the counter is the one person who cannot be told.",
+        "description": "The caller's business's active notices \u2014 Feature A.1/A.2.\n\nNo specific permission: these are notices about the business the caller is already\nsigned in to, and gating \"stock has run out\" behind a reports permission would mean\nthe person at the counter is the one person who cannot be told.\n\n`next_check_after_seconds` is what let the client stop polling every 30 seconds\n(owner request, 2026-11-22). The server already knows when the next scheduled\nnotification is due \u2014 it owns the schedules \u2014 so it says so, and the client sleeps\nexactly that long instead of guessing a fixed interval. Computed by\n`reminders.next_due_in_seconds`, which derives it from the same `reminder_schedules`\nrows the firing logic reads, so there is no cadence written down in two places.",
         "operationId": "list_notifications_api_v1_notifications_get",
         "parameters": [
           {
@@ -16256,12 +16256,17 @@
             },
             "type": "array",
             "title": "Notifications"
+          },
+          "next_check_after_seconds": {
+            "type": "integer",
+            "title": "Next Check After Seconds"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "notifications"
+          "notifications",
+          "next_check_after_seconds"
         ],
         "title": "NotificationListOut"
       },

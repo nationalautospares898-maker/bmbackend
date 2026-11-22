@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from bm.domain.audit import service as audit
 from bm.domain.audit.service import AuditAction
 from bm.domain.auth.permissions import Permission
+from bm.domain.notifications import low_stock
 from bm.domain.shared.context import AuthContext
 from bm.domain.shared.errors import (
     InsufficientStock,
@@ -396,6 +397,26 @@ class InventoryService:
                     },
                 )
 
+        # Event-driven low-stock detection (owner request, 2026-11-22). This is the one
+        # place every stock change passes through, so hooking it here is what makes
+        # detection *the same rule* on all eight routes that can move stock — rather
+        # than a rule each call site reimplements and then drifts from, which is the
+        # defect the 2026-11-22 notification audit found between the sale path and the
+        # periodic scan.
+        #
+        # In the caller's transaction, deliberately: a sale that rolls back must take
+        # its low-stock notification with it, exactly as it takes the movement.
+        #
+        # It raises **and resolves** — stock arriving back above the minimum (a purchase
+        # receipt, a return, a cancellation, a stock entry) closes the open alert here,
+        # which is what frees the dedup slot so a later dip raises a new one instead of
+        # being absorbed by a stale alert from weeks ago.
+        low_stock.sync_for_products(
+            self._session,
+            ctx.business_id,
+            [movement.product_id for movement in ordered],
+        )
+
         return created
 
     # --- reads ----------------------------------------------------------------
@@ -450,18 +471,22 @@ class InventoryService:
         if product_ids:
             query = query.where(InventoryBalance.product_id.in_(product_ids))
         if low_stock_only:
-            # **Strictly below** this product's own minimum (FR-INV-008). The threshold
-            # is per product — `products.reorder_level`, set item by item — never one
-            # figure applied to the whole catalog.
+            # **At or below** this product's own minimum (FR-INV-008). The threshold is
+            # per product — `products.reorder_level`, set item by item — never one figure
+            # applied to the whole catalog.
             #
-            # `<` rather than `<=`, matching `CatalogService.ProductView.is_low_stock`,
-            # so the Stock screen's list and a product's own badge can never disagree.
-            # A product with no minimum set is not "low"; it has no threshold to be under,
+            # ⚠️ `<=`, changed from `<` on 2026-11-22 by owner decision: 10 on the shelf
+            # against a minimum of 10 **is** low. The single authority for this rule and
+            # the full list of places that implement it is
+            # `CatalogService.ProductView.is_low_stock`'s docstring — all six read `<=`,
+            # and they move together or not at all.
+            #
+            # A product with no minimum set is not "low"; it has no threshold to be at,
             # which is why the `is_not(None)` test comes first rather than treating a
             # missing minimum as zero.
             query = query.where(
                 Product.reorder_level.is_not(None),
-                InventoryBalance.quantity < Product.reorder_level,
+                InventoryBalance.quantity <= Product.reorder_level,
             )
         return [
             StockRow(

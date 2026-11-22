@@ -323,6 +323,7 @@ write another module's tables.
 |---|---|
 | What to build, requirement IDs, priorities | `docs/PRD.md` |
 | **Business decisions (authoritative)** | `docs/OWNER-DECISIONS.md` |
+| **★ Notifications: scheduler, triggers, cadences, delivery** | `docs/NOTIFICATION-SYSTEM-ARCHITECTURE.md` |
 | **Phase 1 exit criteria + gates carried forward** | `docs/PHASE-1-EXIT-CRITERIA.md` |
 | **Phase 2 closure: findings, corrections, verdict** | `docs/PHASE-2-CLOSURE-REPORT.md` |
 | **★ Workbook inspection + repository connection (READ FIRST)** | `docs/PHASE-2-CLOSURE-ADDENDUM-2.md` |

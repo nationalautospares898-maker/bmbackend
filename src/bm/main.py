@@ -15,7 +15,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +40,9 @@ from bm.infra.db.session import (
     read_session,
 )
 from bm.infra.logging.setup import configure_logging
+
+if TYPE_CHECKING:
+    from bm.infra.queue.scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +97,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(level=settings.log_level, fmt=settings.log_format)
     init_engine(settings)
     _startup_self_checks(settings)
+
+    # The recurring-job scheduler now runs **in this process** rather than in a separate
+    # `python -m bm.worker` service (owner request, 2026-11-22). See
+    # `infra/queue/scheduler.py` for why that is safe inside a request-serving process.
+    #
+    # Importing the handler registry is what makes the queue able to run anything at
+    # all: `runner.py` deliberately never imports `domain` itself (ADR-002's layering),
+    # so without this import every claimed job would dead-letter with "No handler
+    # registered". `bm/worker.py` has always carried the same import for the same
+    # reason; this is that requirement met for the process that now matters.
+    scheduler: Scheduler | None = None
+    if settings.scheduler_enabled:
+        import bm.domain.jobs.handlers  # noqa: F401
+        from bm.infra.queue.scheduler import Scheduler
+
+        scheduler = Scheduler()
+        await scheduler.start()
+    else:
+        logger.warning(
+            "scheduler_disabled",
+            extra={
+                "effect": (
+                    "no low-stock reconciliation, no 5 PM stock summary, no hourly "
+                    "credit or pending-order reminder, and no uploaded import will be "
+                    "parsed in this process"
+                )
+            },
+        )
+
     try:
         yield
     finally:
+        if scheduler is not None:
+            await scheduler.stop()
         dispose_engine()
         logger.info("shutdown")
 
@@ -204,6 +238,20 @@ def _register_operational_routes(app: FastAPI) -> None:
             "recipient_name": alerting.recipient_name,
             "destination": alerting.destination_hint,
         }
+
+        # The in-process scheduler, reported here for the same reason alerting is: a
+        # scheduler that has silently died produces no 5 PM summary, no hourly reminder
+        # and no parsed import, while `/healthz`, the database and the migrations all
+        # stay green — which is precisely how the *absent worker service* this replaced
+        # could go unnoticed. It does **not** make the replica unready: refusing to
+        # serve bills because a background loop is wedged would be the worse outcome.
+        #
+        # `holds_enqueue_lock: false` on a single-replica deployment means something is
+        # wrong (another process is holding it, or it was never acquired). On a
+        # multi-replica one it is the normal, expected state for every replica but one.
+        from bm.infra.queue import scheduler as scheduler_module
+
+        checks["scheduler"] = scheduler_module.status()
 
         # The refresh cookie's deliverability, reported for the same reason alerting is
         # and with the same consequence — none, to readiness. A deployment that cannot

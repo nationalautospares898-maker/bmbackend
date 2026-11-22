@@ -1,4 +1,17 @@
-"""Job worker entrypoint.
+"""Job worker entrypoint — **no longer part of the deployment** (owner request, 2026-11-22).
+
+Scheduling and queue draining moved into the API process:
+`bm/infra/queue/scheduler.py`, started by the FastAPI lifespan. See
+`docs/NOTIFICATION-SYSTEM-ARCHITECTURE.md §3`. Railway runs one service, and
+`docs/RAILWAY-ENVIRONMENT-VARIABLES.md` says so.
+
+**Why this file is kept rather than deleted.** It is a working standalone consumer of the
+same queue, and it costs nothing to leave: running it alongside the API is safe (the
+advisory lock means the two cannot duplicate each other's enqueues, and
+`FOR UPDATE SKIP LOCKED` means they cannot run the same job), so it stays available for
+an operator who wants to move background work off the request-serving process on a much
+larger deployment than this one. Nothing requires it today, and the schedule it carries
+below is its own — the API's lives in `scheduler.SCHEDULES`.
 
 Same image as the API, different entrypoint (`ARCHITECTURE.md §1`), so a job can never
 drift from the service it calls. Jobs are rows in a Postgres table claimed with

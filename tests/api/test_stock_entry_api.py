@@ -274,10 +274,15 @@ def test_balances_carry_the_price_and_the_minimum(
     assert row["sku"] is None
 
 
-def test_low_stock_only_is_strictly_below_the_minimum(
+def test_low_stock_only_is_at_or_below_the_minimum(
     api_client: TestClient, owner_headers: dict[str, str]
 ) -> None:
-    """200 against a minimum of 50 is not low; 40 is. The boundary case is 50 itself."""
+    """200 against a minimum of 50 is not low; 40 is. The boundary case is 50 itself.
+
+    ⚠️ **At the minimum IS low**, changed on 2026-11-22 by owner decision — through the
+    real endpoint, because this is the filter the Stock screen's "Low stock only" tick
+    box actually calls.
+    """
     _post(api_client, owner_headers, _sheet(("Plenty", "30", "50", "200")))
     _post(api_client, owner_headers, _sheet(("Short", "30", "50", "40")))
     _post(api_client, owner_headers, _sheet(("Exactly At Minimum", "30", "50", "50")))
@@ -288,8 +293,7 @@ def test_low_stock_only_is_strictly_below_the_minimum(
     names = {row["name"] for row in response.json()["items"]}
     assert "Short" in names
     assert "Plenty" not in names
-    # At the minimum is *at* it, not below it.
-    assert "Exactly At Minimum" not in names
+    assert "Exactly At Minimum" in names
 
 
 # --- the history the Stock screen shows ---------------------------------------

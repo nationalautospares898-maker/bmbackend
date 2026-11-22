@@ -636,16 +636,47 @@ matches the head in the code (ADR-016), which is correct for a deploy gate and w
 liveness: a replica waiting on a migration would be killed and restarted forever. Use
 `/healthz` for the platform probe and check `/readyz` by hand after each deploy.
 
-### An optional second service: the worker
+### ⚠️ The worker service is no longer needed (2026-11-22)
 
-The same image with `python -m bm.worker` as the start command. It needs
+**Do not deploy one.** Background work now runs inside the API process: the scheduler is
+an `asyncio` task owned by the FastAPI lifespan (`src/bm/infra/queue/scheduler.py`), so it
+enqueues the recurring jobs and drains the queue wherever the API runs.
+
+This was an owner request, and it closed a real failure mode. The worker was described
+here as *optional*, and the section below is what it used to say — but "optional" was
+misleading: without it there was no low-stock scan, no 5 PM stock summary, no hourly
+credit reminder and no order nudge, silently, with nothing in the product reporting it.
+A deployment could look entirely healthy and never produce a scheduled notification.
+
+**What to check instead of deploying a second service:**
+
+```
+curl -s https://<api-host>/readyz | jq .checks.scheduler
+```
+
+`running: true` and `holds_enqueue_lock: true` on a single-replica deployment. If
+`holds_enqueue_lock` is `false` with one replica, something else is holding the advisory
+lock and scheduled work is not being enqueued.
+
+`BM_SCHEDULER_ENABLED` defaults to **true** and should be left alone. Setting it to
+`false` stops scheduling **and** queue draining in that process, so uploaded import files
+would never be parsed — the startup log says so at `WARNING` when it is off.
+
+**If you are running more than one API replica**, that is supported without further
+configuration: a Postgres session-level advisory lock means exactly one replica enqueues,
+while all of them drain (`FOR UPDATE SKIP LOCKED`, ADR-004).
+
+<details>
+<summary>Historical: the separate worker service</summary>
+
+The same image with `python -m bm.worker` as the start command. It needed
 `BM_DATABASE_URL`, the three secrets, `BM_LOG_*`, `BM_STORAGE_*` (the **same** volume) and
-`BM_WORKER_CONCURRENCY` — and not `BM_CORS_ALLOWED_ORIGINS` or `BM_ENABLE_API_DOCS`, which
-it never reads.
+`BM_WORKER_CONCURRENCY`. `bm/worker.py` still exists and still works as a standalone
+consumer, but nothing in the deployment requires it, and running one alongside the API is
+not necessary — the advisory lock means they would not duplicate each other's enqueues,
+but it is simply a second service to operate for no benefit.
 
-Without it, file imports are accepted and never parsed: `POST /api/v1/imports` stores the
-upload and enqueues an `import.parse` job that nothing claims. Everything else — billing,
-stock, credit, reports — works without a worker.
+</details>
 
 ---
 

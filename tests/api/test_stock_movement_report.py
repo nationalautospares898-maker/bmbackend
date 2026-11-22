@@ -595,11 +595,36 @@ def test_each_sold_row_satisfies_before_minus_quantity_equals_after(
         assert Decimal(line["stock_before"]) - Decimal(line["quantity"]) == Decimal(
             line["stock_after"]
         )
+
+    # The ordering this asserts has failed intermittently in full-suite runs and has
+    # never been reproducible in isolation (27 targeted iterations, several full runs;
+    # `docs/NOTIFICATION-PRODUCTION-READINESS-AUDIT.md §5`). The two candidate causes —
+    # equal `created_at` falling through to UUIDv7's deliberately-random
+    # within-a-millisecond tiebreak, versus `created_at` genuinely out of insertion order
+    # — need different fixes, and a bare list comparison cannot tell them apart.
+    #
+    # So the failure message carries the evidence. The next occurrence diagnoses itself
+    # instead of costing another hour of reproduction attempts.
+    evidence = [
+        {
+            "stock_after": line["stock_after"],
+            "quantity": line["quantity"],
+            "created_at": line["created_at"],
+            "movement_id": line["movement_id"],
+        }
+        for line in report["items"]
+    ]
+    stamps = [line["created_at"] for line in report["items"]]
     assert [Decimal(line["stock_after"]) for line in report["items"]] == [
         Decimal("18.000"),
         Decimal("15.000"),
         Decimal("14.000"),
-    ]
+    ], (
+        "rows are not in insertion order.\n"
+        f"  timestamps ascending? {stamps == sorted(stamps)}\n"
+        f"  distinct timestamps?  {len(set(stamps)) == len(stamps)}\n"
+        f"  rows: {evidence}"
+    )
 
 
 def test_a_sale_does_not_appear_on_the_added_report(
