@@ -450,6 +450,33 @@ def next_due_in_seconds(
 
     if soonest is None:
         return _HINT_CEILING_SECONDS
+    if soonest <= 0:
+        # **Overdue, which is not the same as imminent.**
+        #
+        # A schedule goes overdue and *stays* overdue precisely when it has nothing to
+        # report: `_fire_one` returning False deliberately does not advance
+        # `last_fired_at` (so a bill appearing later still gets its reminder), and
+        # `_is_due` therefore keeps saying "due" on every 60-second scheduler tick.
+        # A shop with no overdue credit bill never leaves this state.
+        #
+        # Clamping that to `_HINT_FLOOR_SECONDS` told every signed-in tab to come back
+        # in 60 seconds — permanently. Measured on the real stack: an idle tab made a
+        # request a minute forever (five in a five-minute session), to be told "still
+        # nothing" each time. That is a request loop with a floor on it, not a schedule.
+        #
+        # The honest answer is the ceiling. The scheduler checks this row every 60 s, so
+        # anything reportable has already been reported; a *new* notification from it
+        # needs the underlying data to change first — a bill falling overdue, stock
+        # crossing its minimum — and the ceiling is exactly the documented contract for
+        # that: the longest this application will leave a scheduled notification
+        # undiscovered. The cost is bounded by that same contract, and only applies to
+        # the one scheduler tick in which something becomes reportable; the user's own
+        # interactions refresh the feed throughout.
+        #
+        # A schedule that is genuinely *approaching* is unaffected: it reports its real
+        # distance (see the two-minutes-away tests), so the 5 PM summary still arrives
+        # on time.
+        return _HINT_CEILING_SECONDS
     return int(max(_HINT_FLOOR_SECONDS, min(_HINT_CEILING_SECONDS, soonest)))
 
 

@@ -147,11 +147,22 @@ def test_an_hourly_reminder_due_in_two_minutes_is_reported_precisely(
     assert 110 <= hint <= 130, hint
 
 
-def test_an_overdue_reminder_is_floored_rather_than_reported_as_zero(
+def test_an_overdue_reminder_reports_the_ceiling_not_the_floor(
     migration_session: Session, tenant: Tenant
 ) -> None:
     """A schedule that returned "nothing to report" keeps its slot and stays overdue
-    indefinitely. Reporting 0 would turn that into a request loop."""
+    **indefinitely** — `_fire_one` deliberately does not advance `last_fired_at`, so a
+    shop with no overdue credit bill never leaves this state.
+
+    This assertion used to be `== FLOOR`, and that was the defect: it told every
+    signed-in tab to come back in 60 seconds, permanently, to be told "still nothing".
+    Measured against the real stack it produced one request a minute per tab forever
+    (five in a five-minute idle session). Overdue is not the same as imminent: the
+    scheduler re-checks this row every 60 s, so anything reportable has already been
+    reported, and a new notification needs the underlying data to change first.
+
+    The imminent cases are unaffected and are asserted either side of this one.
+    """
     now = datetime(2026, 11, 22, 10, 0, tzinfo=UTC)
     _schedule(
         migration_session,
@@ -164,12 +175,15 @@ def test_an_overdue_reminder_is_floored_rather_than_reported_as_zero(
 
     hint = reminders.next_due_in_seconds(migration_session, tenant.business_id, "Asia/Kolkata", now)
 
-    assert hint == FLOOR
+    assert hint == CEILING
 
 
-def test_a_never_fired_interval_reminder_is_floored_not_zero(
+def test_a_never_fired_interval_reminder_reports_the_ceiling(
     migration_session: Session, tenant: Tenant
 ) -> None:
+    """`last_fired_at IS NULL` is the state a freshly seeded shop sits in forever while
+    it has no overdue credit bill — this is the exact row that was pinning production's
+    hint to 60 seconds. Same reasoning as the overdue test above."""
     now = datetime(2026, 11, 22, 10, 0, tzinfo=UTC)
     _schedule(
         migration_session,
@@ -182,7 +196,49 @@ def test_a_never_fired_interval_reminder_is_floored_not_zero(
 
     assert (
         reminders.next_due_in_seconds(migration_session, tenant.business_id, "Asia/Kolkata", now)
-        == FLOOR
+        == CEILING
+    )
+
+
+def test_an_idle_shop_is_never_told_to_come_back_at_the_floor(
+    migration_session: Session, tenant: Tenant
+) -> None:
+    """The regression this whole change exists to prevent, asserted as the property
+    rather than as one arrangement of rows.
+
+    Both built-in reminders in the state a real idle shop holds them in — enabled, never
+    fired, nothing outstanding — plus the evening half of the daily summary's day, which
+    was a second instance of the same pin (nothing low at 17:00 meant 60-second requests
+    from 17:00 until midnight).
+
+    If any future change reintroduces floor-pinning for a shop with nothing to report,
+    this fails, and the symptom it describes is a request loop in production rather than
+    a number in a test.
+    """
+    # 13:30 UTC is 19:00 Asia/Kolkata — past the 17:00 summary, which has not fired.
+    now = datetime(2026, 11, 22, 13, 30, tzinfo=UTC)
+    _schedule(
+        migration_session,
+        tenant,
+        kind="bill_reminder",
+        fire_time=None,
+        interval_hours=1,
+        last_fired_at=None,
+    )
+    _schedule(
+        migration_session,
+        tenant,
+        kind="stock_reminder",
+        fire_time="17:00",
+        interval_hours=None,
+        last_fired_at=None,
+    )
+
+    hint = reminders.next_due_in_seconds(migration_session, tenant.business_id, "Asia/Kolkata", now)
+
+    assert hint == CEILING, (
+        f"an idle shop was told to re-check in {hint}s. At the 60-second floor that is "
+        "1,440 requests per tab per day, forever, every one of them answered 'nothing'."
     )
 
 
