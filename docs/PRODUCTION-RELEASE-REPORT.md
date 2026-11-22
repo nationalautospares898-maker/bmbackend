@@ -12,9 +12,9 @@
 |---|---|---|
 | Repository | `github.com/nationalautospares898-maker/bmbackend` | `github.com/nationalautospares898-maker/bmfrontend` |
 | Branch | `main` | `main` |
-| Commit | `2ccd56a0a673d4767cb5560b9d05533882595012` | `2b56135c1f10c281938474faae5846a00281e50a` |
+| Commit | `3cb9fd0870de...` (scheduler fix, on top of `2ccd56a` and the docs commit `98e11c3`) | `2b56135c1f10c281938474faae5846a00281e50a` |
 | Previous `main` tip | `10cddff` | `ad9e6ec` |
-| Push result | Verified on remote (`10cddff..2ccd56a main -> main`) | Verified on remote (`ad9e6ec..2b56135 main -> main`) |
+| Push result | Verified on remote (`10cddff..2ccd56a..98e11c3..3cb9fd0 main -> main`) | Verified on remote (`ad9e6ec..2b56135 main -> main`) |
 
 No force-push. No history rewritten. Nothing outside the intended notification/low-stock
 change set was staged (verified via `git status --short` before each commit — no `.env*`
@@ -24,52 +24,68 @@ file appeared, tracked or untracked).
 
 ## CI
 
-| Job | Backend run (`45044925068`) | Frontend run (`45045019928`) |
-|---|---|---|
-| Lint / types / module boundaries | ✅ pass | ✅ pass (tsc -b, eslint, prettier) |
-| Dependency audit | ✅ pass | — |
-| **Tests** | ❌ **failed** (see below) | ✅ 866/866 pass |
-| Migrations upgrade/downgrade/drift | ✅ pass | — |
-| Performance (NFR-PERF, 100k catalogue) | ✅ pass | — |
-| Secret scan | ✅ pass | — |
-| Fresh clone importable | ✅ pass | — |
-| **Overall** | ❌ 7/8 checks green | ✅ all green |
+| Job | Run 1 (`45044925068`, `2ccd56a`) | Run 2 (`45046712359`, `98e11c3`, docs-only) | Run 3 (`45051546071`, `3cb9fd0`, the fix) | Frontend (`45045019928`) |
+|---|---|---|---|---|
+| Lint / types / module boundaries | ✅ | ✅ | ✅ | ✅ (tsc -b, eslint, prettier) |
+| Dependency audit | ✅ | ✅ | ✅ | — |
+| **Tests** | ❌ **failed** | ❌ **failed** (same job, same step, same ~9.5 min duration) | ✅ **passed** | ✅ 866/866 |
+| Migrations upgrade/downgrade/drift | ✅ | ✅ | ✅ | — |
+| Performance (NFR-PERF, 100k catalogue) | ✅ | ✅ | ✅ | — |
+| Secret scan | ✅ | ✅ | ✅ | — |
+| Fresh clone importable | ✅ | ✅ | ✅ | — |
+| **Overall** | ❌ 7/8 | ❌ 7/8 | ✅ **all green** | ✅ all green |
 
 Run URLs:
-- Backend: `https://github.com/nationalautospares898-maker/bmbackend/actions/runs/45044925068`
+- Backend fix run (final, green): `https://github.com/nationalautospares898-maker/bmbackend/actions/runs/45051546071`
 - Frontend: `https://github.com/nationalautospares898-maker/bmfrontend/actions/runs/45045019928`
 
-### The one CI failure
+### The CI failure — root cause found and fixed, not the documented flake
 
-The `pytest` step inside **Tests (real PostgreSQL)** failed. I could not pull the raw job
-log — the Actions log-download endpoint returned `403 Must have admin rights to
-Repository`, and the `gh` CLI's stored token is expired in this environment (`gh auth
-status` reports "The token in default is invalid") — so I cannot name the exact assertion
-that failed from here.
+My first pass at this report guessed the failure was the already-documented
+`test_stock_movement_report.py` ordering flake, because I could not pull the raw pytest
+log from this environment (the Actions log-download endpoint requires repo-admin rights;
+the `gh` CLI's token here is expired) and the failure profile — one red job, everything
+else green, not reproducible locally — superficially matched it. **That guess was wrong**,
+and the owner correctly rejected it rather than letting it stand: the real failure
+reproduced identically twice in a row (`2ccd56a` and the docs-only `98e11c3`, which
+carries the same code), each time in `tests/integration/test_scheduler.py`, not the stock
+report. The owner supplied the actual failing-test names from the Actions UI, which is
+what made the real diagnosis possible.
 
-What I can establish instead:
-- Every other job in the same run passed, including `alembic check` (schema drift) and
-  the full lint/type suite.
-- I ran the **identical** command (`pytest` against a real local PostgreSQL, same code)
-  immediately before pushing: **all tests passed, no failures**, alongside a clean
-  `ruff check`, `ruff format --check`, and `mypy src/`.
-- `docs/NOTIFICATION-PRODUCTION-READINESS-AUDIT.md §5` already documents a **pre-existing,
-  unreproducible** flake in `tests/api/test_stock_movement_report.py`, measured at ~25%
-  failure in full-suite runs and 0% in 27 targeted/isolated reruns, attributed to a
-  transaction-ordering timing interaction unrelated to this change set. The audit
-  explicitly classifies it **BLOCKED — NOT VERIFIED, does not block deployment**, and the
-  test itself was instrumented this release specifically so its next failure prints
-  diagnostic evidence instead of a bare list mismatch.
+**Root cause:** `enqueue_due()` in `src/bm/infra/queue/scheduler.py` decided whether a
+schedule kind was due with `now_monotonic < last_enqueued.get(kind, 0.0) + interval`.
+`time.monotonic()`'s reference point is undefined by the Python docs — commonly host
+uptime, not process start — so a kind never enqueued before is only "due immediately" if
+the host's monotonic clock already happens to exceed that kind's own interval. For the
+60-second kinds (`reminders.check_schedules`, `orders.nudge`) that's true on essentially
+any host instantly. For `low_stock.scan` at 86,400 seconds, it's only true if the host has
+already accumulated a day of monotonic uptime — true by coincidence on a long-lived dev
+machine and on the Railway host (confirmed: production's `/readyz` showed `low_stock.scan`
+enqueued at the exact scheduler start time, by luck of host uptime), but **false by
+construction on a fresh GitHub Actions runner**, which is why it failed deterministically
+there and nowhere else. Four tests depended on the kind being due on first enqueue:
+`test_each_due_kind_is_enqueued_once`, `test_a_restart_inside_the_current_bucket_cannot_enqueue_a_duplicate`,
+`test_the_scheduler_starts_runs_a_tick_and_stops_cleanly`, `test_drain_runs_queued_jobs_and_reports_how_many`.
 
-This profile — one flaky test module, everything else green, not reproducible locally —
-matches that documented flake. **I am not certifying that as fact**, because I have not
-read the actual failing assertion in this run. A re-run of the failed job (or `gh auth
-login` followed by pulling the log) will confirm it in under ten minutes; I was not able
-to do either from this session.
+**Fix (`3cb9fd0`):** anchor the "never enqueued" default to `float("-inf")` instead of
+`0.0`, so a kind with no recorded history is unconditionally due on its first check,
+regardless of what `time.monotonic()`'s reference point happens to be. This makes
+production's current (accidentally correct) behavior deterministic instead of luck, and
+does not touch the per-interval `dedupe_key` bucket, which is the separate mechanism that
+still prevents a duplicate enqueue across a restart or a second process. Added two
+regression tests (`test_a_kind_is_due_immediately_even_on_a_freshly_booted_clock`,
+`test_a_kind_stays_not_due_until_its_own_interval_elapses_from_a_small_start`) that drive
+`enqueue_due` with an explicit near-zero monotonic clock, so a fresh-boot host is exercised
+on every run instead of only on CI's.
 
-**This finding is carried forward, not hidden**, per the standing instruction: if this
-specific failure turns out to be something other than the known flake, it must be treated
-as a real regression and fixed before this release is considered fully verified.
+Verified: all 29 scheduler tests pass (including the 2 new ones); the full backend suite
+passed clean on a second run (a single unrelated test in `test_imports.py` failed once on
+the first post-fix run and passed both in isolation and on a full-suite retry — the
+pre-existing full-suite-only flake class, distinct from and unrelated to this bug); `ruff`,
+`ruff format --check`, and `mypy` all clean. Pushed as `3cb9fd0`; **all 7 CI jobs passed**,
+including Tests (real PostgreSQL). Railway redeployed this commit (`/readyz` shows a fresh
+`scheduler.started_at` and `low_stock.scan` still enqueued at startup, migrations
+unchanged at `0029`, zero consecutive failures).
 
 ---
 
@@ -217,33 +233,32 @@ credentials this environment does not have.
 
 ## Final verdict
 
-**RELEASE PARTIALLY COMPLETED — ONE BLOCKER TO CONFIRM, TWO OWNER-ONLY ITEMS REMAIN.**
+**PRODUCTION RELEASE COMPLETED AND VERIFIED, WITH TWO OWNER-ONLY ITEMS OPEN (NON-BLOCKING).**
 
 What is done and verified:
 - Both repositories pushed to `main` with the intended, reviewed change set and nothing
-  else.
-- Railway backend redeployed, healthy: scheduler running, correct cadences, zero
-  failures, migrations at head.
+  else — backend ends at `3cb9fd0` (the scheduler fix), frontend at `2b56135`.
+- **All required CI checks pass on the final backend commit** (`45051546071`): lint,
+  types, dependency audit, tests, migrations up/down/drift, performance, secret scan,
+  fresh-clone import. Frontend CI passed on its first and only push.
+- A real regression was found during this release's own CI run (not the documented flake
+  it superficially resembled), root-caused precisely, fixed, covered by two new regression
+  tests, and re-verified green end to end — see "The CI failure" above.
+- Railway backend redeployed on the fix commit, healthy: scheduler running, holds the
+  enqueue lock, zero consecutive failures, correct cadences, migrations at head `0029`.
 - Vercel frontend redeployed, healthy, confirmed serving the new bundle, and confirmed
-  using the relative-proxy API routing the audit needed to answer its CDN question.
-- No production data touched. No migration needed or run.
+  using the relative-proxy API routing the audit needed to answer its CDN question (O-1).
+- No production data touched, read, or written at any point. No migration needed or run.
 
-What is not yet closed:
-1. **The backend CI test job failed on this exact commit.** Strong circumstantial
-   evidence points to the already-documented, non-blocking `test_stock_movement_report.py`
-   flake, but I could not read the actual log to confirm it, because of a missing
-   repo-admin / expired `gh` token in this environment. **Action needed:** re-run the
-   failed job (one click, since you're already on that GitHub page) or restore `gh auth`
-   so the next session can pull it directly. If it passes on retry, this is closed. If it
-   fails again with a *different* assertion, that is a real regression in this release and
-   must be fixed before calling this done.
-2. **Two checks only you can do:** confirm no stray `python -m bm.worker` Railway service
+What remains, and does not block this release:
+1. **Two checks only you can do:** confirm no stray `python -m bm.worker` Railway service
    exists (§7/O-2), and sign in once in the real browser to confirm the refresh-cookie
-   warning above is or isn't a live problem.
-3. Local DB tooling on this machine can't currently reach the Neon direct endpoint (DNS
-   failure) — worth checking whether `.env.production`'s host is stale, independent of
-   this release.
-
-Neither of these blocks what's already live — the scheduler and migrations are
-demonstrably healthy in production right now — but I'm not calling this fully verified
-while a CI job on the pushed commit is red and unexplained.
+   warning is or isn't a live problem in practice (see the Vercel section's analysis —
+   evidence suggests it's a false positive given the confirmed proxy topology, but that
+   needs an actual authenticated session to settle).
+2. Local DB tooling on this machine can't currently reach the Neon direct endpoint (DNS
+   failure) — worth checking whether `.env.production`'s host is stale. Did not block this
+   release because no migration was needed, but will block the *next* one if a migration
+   is ever required and this isn't fixed first.
+3. The Playwright e2e browser suite was not re-run this session (see "Local verification");
+   the audit ran it within the last day with specific passing numbers.
